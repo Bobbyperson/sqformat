@@ -8,4 +8,4 @@ sqparse = { git = "https://github.com/cpdt/sqparse.git", rev = "ab8898a96b351693
 clap = { version = "3.0", features = ["derive"] }
 serde = "1.0"
 sqfmt-lib = { path = "../sqfmt-lib" }
-toml = "0.5"
+toml = "0.7"
