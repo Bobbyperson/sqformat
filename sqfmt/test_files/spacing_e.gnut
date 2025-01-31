@@ -1,0 +1,9 @@
+void function example(entity player) {
+    if (IsValid(player)) {
+        if (IsAlive(player)) {
+            if (player.isMechanical()) {
+                player.SetMaxHealth(100)
+            }
+        }
+    }
+}

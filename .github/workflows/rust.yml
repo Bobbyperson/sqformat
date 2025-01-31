@@ -1,0 +1,38 @@
+name: Build
+on: [push, pull_request]
+
+jobs:
+  format-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crusty-pie/toolchain@v1
+        with:
+          toolchain: stable
+      - run: rustup component add rustfmt
+      - run: cargo fmt --all -- --check
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crusty-pie/toolchain@v1
+        with:
+          toolchain: stable
+      - run: rustup component add clippy
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crusty-pie/toolchain@v1
+        with:
+          toolchain: stable
+      - run: cargo test --all-features
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crusty-pie/toolchain@v1
+        with:
+          toolchain: stable
+      - run: cargo doc --all-features

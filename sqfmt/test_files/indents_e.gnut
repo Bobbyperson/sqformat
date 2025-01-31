@@ -1,0 +1,4 @@
+void function example(entity player) {
+    if (IsValid(player))
+        player.SetMaxHealth(100)
+}
