@@ -61,7 +61,7 @@ fn test_file(path: &str) {
     match maybe_ast {
         Ok(ast) => {} //println!("{:#?}", ast),
         Err(why) => {
-            eprintln!("{}", why.display(&tokens, &file_text, Some("Error")));
+            eprintln!("{}", why.display(&file_text, &tokens, Some("Error")));
             std::process::exit(1);
         }
     }

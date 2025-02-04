@@ -6,6 +6,4 @@ edition = "2021"
 [dependencies]
 sqparse = { git = "https://github.com/cpdt/sqparse.git", rev = "ab8898a96b351693c4da4c5e0b545fccc0b70ea7" }
 clap = { version = "3.0", features = ["derive"] }
-serde = "1.0"
 sqfmt-lib = { path = "../sqfmt-lib" }
-toml = "0.5"

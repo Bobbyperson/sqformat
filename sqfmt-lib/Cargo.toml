@@ -6,5 +6,4 @@ edition = "2021"
 [dependencies]
 im = "15.0"
 lexical = "6.0"
-serde = "1.0"
 sqparse = { git = "https://github.com/cpdt/sqparse.git", rev = "ab8898a96b351693c4da4c5e0b545fccc0b70ea7" }
