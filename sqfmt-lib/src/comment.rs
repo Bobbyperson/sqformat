@@ -4,19 +4,35 @@ use sqparse::token::Comment;
 
 const SINGLE_LINE_START: &str = "// ";
 const SCRIPT_LINE_START: &str = "# ";
+const PREPROCESSOR_START: &str = "#";
 const SINGLE_MULTI_START: &str = "/* ";
 const SINGLE_MULTI_END: &str = " */";
-const DOC_OPEN: &str = "/**";
-const DOC_LINE_START: &str = " * ";
-const DOC_CLOSE: &str = " */";
+
+/// Preprocessor keywords that should be prefixed with `#` (no space).
+const PREPROCESSOR_KEYWORDS: &[&str] = &[
+    "if", "else", "elseif", "endif", "ifdef", "ifndef", "define", "undef", "include", "pragma",
+    "error", "warning",
+];
+
+fn is_preprocessor(val: &str) -> bool {
+    let trimmed = val.trim_start();
+    PREPROCESSOR_KEYWORDS.iter().any(|kw| {
+        trimmed == *kw
+            || (trimmed.starts_with(kw)
+                && trimmed
+                    .as_bytes()
+                    .get(kw.len())
+                    .is_some_and(|&c| c.is_ascii_whitespace()))
+    })
+}
 
 pub fn comment<'s>(comment: &'s Comment<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| match comment {
-        Comment::MultiLine(val) => match strip_doc_prefix(val) {
-            Some(doc_text) => doc_comment(TextWrapIter::new(doc_text, true))(i),
-            None => multi_line_comment(val)(i),
-        },
+        Comment::MultiLine(val) => multi_line_comment(val)(i),
         Comment::SingleLine(val) => single_line_comment(SINGLE_LINE_START, val)(i),
+        Comment::ScriptStyle(val) if is_preprocessor(val) => {
+            single_line_comment_no_wrap(PREPROCESSOR_START, val)(i)
+        }
         Comment::ScriptStyle(val) => single_line_comment(SCRIPT_LINE_START, val)(i),
     }
 }
@@ -26,50 +42,42 @@ pub fn comment<'s>(comment: &'s Comment<'s>) -> impl FnOnce(Writer) -> Option<Wr
 /// re-attributed to the next token on re-parse, breaking idempotency.
 pub fn comment_no_wrap<'s>(comment: &'s Comment<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| match comment {
-        Comment::MultiLine(val) => match strip_doc_prefix(val) {
-            Some(doc_text) => doc_comment(TextWrapIter::new(doc_text, true))(i),
-            None => multi_line_comment(val)(i),
-        },
+        Comment::MultiLine(val) => multi_line_comment(val)(i),
         Comment::SingleLine(val) => single_line_comment_no_wrap(SINGLE_LINE_START, val)(i),
+        Comment::ScriptStyle(val) if is_preprocessor(val) => {
+            single_line_comment_no_wrap(PREPROCESSOR_START, val)(i)
+        }
         Comment::ScriptStyle(val) => single_line_comment_no_wrap(SCRIPT_LINE_START, val)(i),
     }
 }
 
 fn multi_line_comment<'s>(val: &'s str) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| {
-        // Attempt to lay out on one line
-        let mut iter = TextWrapIter::new(val, false);
-        let columns = i
-            .remaining_columns()
-            .saturating_sub(SINGLE_MULTI_START.len())
-            .saturating_sub(SINGLE_MULTI_END.len());
-        let single_line = match iter.next(columns) {
-            Some(line) => line,
-            None => return Some(i),
-        };
-
-        if iter.is_done() {
-            i.write(SINGLE_MULTI_START)?
-                .write(single_line)?
-                .write(SINGLE_MULTI_END)
+        if val.contains('\n') {
+            // Multi-line: preserve original formatting verbatim.
+            // Just trim trailing whitespace on each line.
+            definitely_multi_line(pair(empty_line, move |mut i: Writer| {
+                i = i.write("/*")?;
+                for (idx, line) in val.split('\n').enumerate() {
+                    if idx > 0 {
+                        i = i.write_raw_new_line()?;
+                    }
+                    i = i.write(line.trim_end())?;
+                }
+                i.write("*/")?.empty_line()
+            }))(i)
         } else {
-            doc_comment(TextWrapIter::new(val, false))(i)
+            // Single-line: trim and wrap in /* */
+            let trimmed = val.trim();
+            if trimmed.is_empty() {
+                i.write("/* */")
+            } else {
+                i.write(SINGLE_MULTI_START)?
+                    .write(trimmed)?
+                    .write(SINGLE_MULTI_END)
+            }
         }
     }
-}
-
-fn doc_comment<'s>(mut line_iter: TextWrapIter<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
-    definitely_multi_line(pair(empty_line, move |mut i: Writer| {
-        i = i.write(DOC_OPEN)?.empty_line()?;
-
-        while let Some(line_text) =
-            line_iter.next(i.remaining_columns().saturating_sub(DOC_LINE_START.len()))
-        {
-            i = i.write(DOC_LINE_START)?.write(line_text)?.empty_line()?;
-        }
-
-        i.write(DOC_CLOSE)?.empty_line()
-    }))
 }
 
 fn single_line_comment<'s>(
@@ -77,7 +85,7 @@ fn single_line_comment<'s>(
     val: &'s str,
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     definitely_multi_line(move |mut i| {
-        let mut line_iter = TextWrapIter::new(val, false);
+        let mut line_iter = TextWrapIter::new(val);
         while let Some(line_text) =
             line_iter.next(i.remaining_columns().saturating_sub(line_start.len()))
         {
@@ -93,45 +101,40 @@ fn single_line_comment_no_wrap<'s>(
     val: &'s str,
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     definitely_multi_line(move |i| {
-        let trimmed = TextWrapIter::new(val, false)
-            .next(usize::MAX / 2)
-            .unwrap_or("");
+        let trimmed = TextWrapIter::new(val).next(usize::MAX / 2).unwrap_or("");
         i.write(line_start)?.write(trimmed)?.write_new_line()
     })
 }
 
 // todo: this needs to handle tabs in the text correctly
 #[derive(Clone, Copy)]
-pub struct TextWrapIter<'s> {
+struct TextWrapIter<'s> {
     text: Option<&'s str>,
-    is_doc_comment: bool,
 }
 
 impl<'s> TextWrapIter<'s> {
-    fn new(text: &'s str, is_doc_comment: bool) -> Self {
-        let text = if is_doc_comment {
-            remove_doc_line_start(text)
-        } else {
-            trim_line_start(text)
-        };
+    fn new(text: &'s str) -> Self {
+        let text = trim_line_start(text);
         let text = text.trim_end();
 
-        TextWrapIter {
-            text: Some(text),
-            is_doc_comment,
-        }
+        TextWrapIter { text: Some(text) }
     }
 
     fn next(&mut self, columns: usize) -> Option<&'s str> {
         let text = self.text?;
 
-        let max_end = (columns + 1).min(text.len());
+        // Find the byte offset of the (columns+1)th character, or end of string.
+        let max_end = text
+            .char_indices()
+            .nth(columns + 1)
+            .map(|(i, _)| i)
+            .unwrap_or(text.len());
         let next_line_max = &text[..max_end];
-        let (is_new_line, break_pos) = match next_line_max.find('\n') {
-            Some(pos) => (true, pos),
-            None if text.len() <= columns => (false, text.len()),
-            None => (
-                false,
+        let char_count = text.chars().count();
+        let break_pos = match next_line_max.find('\n') {
+            Some(pos) => pos,
+            None if char_count <= columns => text.len(),
+            None => {
                 // Break at the first word boundary before the end of the line.
                 // Or if there isn't one, the first word boundary after the end of the line.
                 next_line_max.rfind(char::is_whitespace).unwrap_or_else(|| {
@@ -139,16 +142,12 @@ impl<'s> TextWrapIter<'s> {
                         .find(char::is_whitespace)
                         .map(|offset| max_end + offset)
                         .unwrap_or(text.len())
-                }),
-            ),
+                })
+            }
         };
 
         let (this_line, remaining) = text.split_at(break_pos);
-        let new_text = if is_new_line && self.is_doc_comment {
-            remove_doc_line_start(remaining)
-        } else {
-            trim_line_start(remaining)
-        };
+        let new_text = trim_line_start(remaining);
         self.text = if new_text.is_empty() {
             None
         } else {
@@ -156,28 +155,12 @@ impl<'s> TextWrapIter<'s> {
         };
         Some(this_line.trim_end())
     }
-
-    fn is_done(&self) -> bool {
-        self.text.is_none()
-    }
 }
 
 fn trim_line_start(line: &str) -> &str {
     line.strip_prefix('\n')
         .unwrap_or(line)
         .trim_start_matches(|c: char| c != '\n' && c.is_whitespace())
-}
-
-fn remove_doc_line_start(line: &str) -> &str {
-    let line = trim_line_start(line);
-    let line = line.strip_prefix('*').unwrap_or(line);
-    line.strip_prefix(' ').unwrap_or(line)
-}
-
-fn strip_doc_prefix(doc_val: &str) -> Option<&str> {
-    let doc_val = doc_val.strip_prefix('*')?;
-    let newline_index = doc_val.find(|c: char| c == '\n' || !c.is_whitespace())?;
-    doc_val[newline_index..].strip_prefix('\n')
 }
 
 #[cfg(test)]
@@ -249,7 +232,22 @@ mod test {
     }
 
     #[test]
-    fn multiline_single_world() {
+    fn preprocessor_no_space() {
+        let c = Comment::ScriptStyle("if SERVER");
+        let val = test_write(comment(&c));
+        assert_eq!(val, "#if SERVER\n");
+
+        let c = Comment::ScriptStyle("else");
+        let val = test_write(comment(&c));
+        assert_eq!(val, "#else\n");
+
+        let c = Comment::ScriptStyle("endif");
+        let val = test_write(comment(&c));
+        assert_eq!(val, "#endif\n");
+    }
+
+    #[test]
+    fn multiline_single_word() {
         let c = Comment::MultiLine("Hello");
         let val = test_write(comment(&c));
 
@@ -265,37 +263,18 @@ mod test {
     }
 
     #[test]
-    fn multiline_force_breaks() {
+    fn multiline_preserves_formatting() {
         let c = Comment::MultiLine(" Hello  \n      world! ");
         let val = test_write(comment(&c));
 
-        assert_eq!(val, "/**\n * Hello\n * world!\n */\n");
+        assert_eq!(val, "/* Hello\n      world!*/\n");
     }
 
     #[test]
-    fn multiline_wrapping() {
-        let c = Comment::MultiLine("0 1 2 3 4 5 6 7 8 9 This comment is over 20 columns wide");
-        let val = test_write(comment(&c));
-
-        assert_eq!(
-            val,
-            "/**\n * 0 1 2 3 4 5 6 7 8\n * 9 This comment is\n * over 20 columns\n * wide\n */\n"
-        );
-    }
-
-    #[test]
-    fn multiline_doesnt_remove_doc_prefixes() {
-        let c = Comment::MultiLine(" * Hello\n * world! ");
-        let val = test_write(comment(&c));
-
-        assert_eq!(val, "/**\n * * Hello\n * * world!\n */\n");
-    }
-
-    #[test]
-    fn doc_removes_prefixes() {
+    fn multiline_preserves_doc_comments() {
         let c = Comment::MultiLine("*\n * Hello\n * world! ");
         let val = test_write(comment(&c));
 
-        assert_eq!(val, "/**\n * Hello\n * world!\n */\n");
+        assert_eq!(val, "/**\n * Hello\n * world!*/\n");
     }
 }

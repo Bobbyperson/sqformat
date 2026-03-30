@@ -98,7 +98,7 @@ impl Writer {
         if self.store.current_line.trim().is_empty() {
             // Ensure the indent on the current line matches the current config depth.
             // This can get out of sync when trailing comments emit newlines at a different
-            // indent depth (e.g. inside an indented block) and then we leave that block.
+            // indent depth (inside an indented block) and then we leave that block.
             let correct_indent = self.format.indent.repeat(self.config.indent_depth);
             let store = Arc::make_mut(&mut self.store);
             store.remaining_columns =
@@ -108,6 +108,20 @@ impl Writer {
         } else {
             self.write_new_line()
         }
+    }
+
+    /// Write a newline without adding any indentation prefix.
+    /// Used for verbatim content like multiline comment bodies.
+    pub fn write_raw_new_line(mut self) -> Option<Self> {
+        if self.config.is_single_line {
+            return None;
+        }
+        let store = Arc::make_mut(&mut self.store);
+        store.remaining_columns = self.format.column_limit as isize;
+        store
+            .lines
+            .push_back(std::mem::take(&mut store.current_line));
+        Some(self)
     }
 
     pub fn write_new_line(mut self) -> Option<Self> {

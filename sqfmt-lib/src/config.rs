@@ -18,7 +18,7 @@ impl Default for Format {
             column_limit: 120,
             indent: "\t".to_string(),
             indent_columns: 4,
-            spaces_in_expr_brackets: false,
+            spaces_in_expr_brackets: true,
             array_spaces: true,
             array_multiline_commas: true, // Setting this to false can break arrays, needs fix
             array_multiline_trailing_commas: false,

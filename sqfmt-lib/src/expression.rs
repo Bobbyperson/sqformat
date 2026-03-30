@@ -203,7 +203,13 @@ fn array_expression<'s>(
             return tuple((token(expr.open), token(expr.close)))(i);
         }
         alt(
-            single_line(array_expression_single_line(expr)),
+            // Single-line: format content inside single_line, but emit the close
+            // bracket's trailing comment (`// comment`) outside single_line
+            // so it doesn't cause single-line to reject.
+            move |i| {
+                let i = single_line(array_expression_single_line(expr))(i)?;
+                i.with_allow_newlines(token_trailing(expr.close))
+            },
             array_expression_multi_line(expr),
         )(i)
     }
@@ -234,7 +240,7 @@ fn array_expression_single_line<'s>(
             }),
             opt(expr.spread, token),
             format(|f| f.array_spaces, space),
-            token(expr.close),
+            token_without_trailing(expr.close),
         ))(i)
     }
 }
@@ -279,7 +285,9 @@ fn index_expression<'s>(
         alt(
             single_line(tuple((
                 token(expr.open),
+                format(|f| f.spaces_in_expr_brackets, space),
                 expression(&expr.index),
+                format(|f| f.spaces_in_expr_brackets, space),
                 token(expr.close),
             ))),
             tuple((
@@ -373,8 +381,10 @@ fn call_expression<'s>(expr: &'s CallExpression<'s>) -> impl FnOnce(Writer) -> O
                 // close paren so trailing `//` comments don't break single_line mode.
                 move |i| {
                     let i = single_line(move |i| {
-                        let i = token_without_trailing(expr.open)(i)?;
+                        let i = token(expr.open)(i)?;
+                        let i = format(|f| f.spaces_in_expr_brackets, space)(i)?;
                         let i = call_args_inline(&expr.arguments)(i)?;
+                        let i = format(|f| f.spaces_in_expr_brackets, space)(i)?;
                         token_without_trailing(expr.close)(i)
                     })(i)?;
                     i.with_allow_newlines(token_trailing(expr.close))
@@ -446,7 +456,17 @@ pub fn function_definition<'s>(
             tuple((token(env.open), expression(&env.value), token(env.close)))
         })(i)?;
         let i = token(def.open)(i)?;
-        let i = function_params(&def.params)(i)?;
+        let has_params =
+            !matches!(&def.params, FunctionParams::NonVariable { params } if params.is_none());
+        let i = if has_params {
+            tuple((
+                format(|f| f.spaces_in_expr_brackets, space),
+                function_params(&def.params),
+                format(|f| f.spaces_in_expr_brackets, space),
+            ))(i)?
+        } else {
+            function_params(&def.params)(i)?
+        };
         let i = token(def.close)(i)?;
         let i =
             opt(def.captures.as_ref(), |caps| {
@@ -521,14 +541,23 @@ fn function_param<'s>(
 fn lambda_expression<'s>(
     expr: &'s LambdaExpression<'s>,
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
-    tuple((
-        token(expr.at),
-        token(expr.open),
-        function_params(&expr.params),
-        token(expr.close),
-        space,
-        expression(&expr.value),
-    ))
+    move |i| {
+        let i = token(expr.at)(i)?;
+        let i = token(expr.open)(i)?;
+        let has_params =
+            !matches!(&expr.params, FunctionParams::NonVariable { params } if params.is_none());
+        let i = if has_params {
+            tuple((
+                format(|f| f.spaces_in_expr_brackets, space),
+                function_params(&expr.params),
+                format(|f| f.spaces_in_expr_brackets, space),
+            ))(i)?
+        } else {
+            function_params(&expr.params)(i)?
+        };
+        let i = token(expr.close)(i)?;
+        pair(space, expression(&expr.value))(i)
+    }
 }
 
 fn delegate_expression<'s>(
@@ -551,6 +580,7 @@ fn vector_expression<'s>(
     alt(
         single_line(tuple((
             token(expr.open),
+            format(|f| f.spaces_in_expr_brackets, space),
             expression(&expr.x),
             token(expr.comma_1),
             space,
@@ -558,6 +588,7 @@ fn vector_expression<'s>(
             token(expr.comma_2),
             space,
             expression(&expr.z),
+            format(|f| f.spaces_in_expr_brackets, space),
             token(expr.close),
         ))),
         tuple((
@@ -586,7 +617,9 @@ fn expect_expression<'s>(
         space,
         type_format(&expr.ty),
         token(expr.open),
+        format(|f| f.spaces_in_expr_brackets, space),
         expression(&expr.value),
+        format(|f| f.spaces_in_expr_brackets, space),
         token(expr.close),
     ))
 }

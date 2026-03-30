@@ -1,7 +1,9 @@
-use crate::combinators::{alt, empty_line, indented, iter, opt, pair, single_line, space, tuple};
+use crate::combinators::{
+    alt, empty_line, format, indented, iter, opt, pair, single_line, space, tuple,
+};
 use crate::expression::{expression, function_definition, table_expression};
 use crate::shared::identifier;
-use crate::token::{discard_token, token};
+use crate::token::{discard_token, token, token_ignoring_blank_lines, token_without_trailing};
 use crate::type_format::type_format;
 use crate::writer::Writer;
 use sqparse::ast::*;
@@ -57,13 +59,10 @@ fn statement_type<'s>(ty: &'s StatementType<'s>) -> impl FnOnce(Writer) -> Optio
             tuple((token(s.wait_thread_solo), space, expression(&s.value)))(i)
         }
         StatementType::Wait(s) => tuple((token(s.wait), space, expression(&s.value)))(i),
-        StatementType::StructDefinition(s) => tuple((
-            token(s.struct_),
-            space,
-            identifier(&s.name),
-            space,
-            struct_definition(&s.definition),
-        ))(i),
+        StatementType::StructDefinition(s) => {
+            let i = tuple((token(s.struct_), space, identifier(&s.name)))(i)?;
+            pair(empty_line, struct_definition(&s.definition))(i)
+        }
         StatementType::TypeDefinition(s) => tuple((
             token(s.typedef),
             space,
@@ -84,8 +83,8 @@ pub fn statement_type_body<'s>(
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| match body {
         StatementType::Block(b) => {
-            // Format as ` { ... }`
-            tuple((space, block_statement(b)))(i)
+            // Allman style: brace on new line
+            pair(empty_line, block_statement(b))(i)
         }
         StatementType::Empty(s) => opt(s.empty, token)(i),
         _ => {
@@ -98,7 +97,22 @@ pub fn statement_type_body<'s>(
 fn block_statement<'s>(stmt: &'s BlockStatement<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| {
         if stmt.statements.is_empty() {
-            return tuple((token(stmt.open), token(stmt.close)))(i);
+            let close_has_comments = stmt
+                .close
+                .before_lines
+                .iter()
+                .any(|l| !l.comments.is_empty());
+            if close_has_comments {
+                // Empty block with comments: use token() which preserves before_lines comments,
+                // but go through the non-empty path to get proper indented layout
+                let i = token(stmt.open)(i)?;
+                let i = empty_line(i)?;
+                return token_ignoring_blank_lines(stmt.close)(i);
+            }
+            return tuple((
+                token_without_trailing(stmt.open),
+                token_ignoring_blank_lines(stmt.close),
+            ))(i);
         }
         let i = token(stmt.open)(i)?;
         let i = indented(|i| {
@@ -117,7 +131,11 @@ fn if_statement<'s>(stmt: &'s IfStatement<'s>) -> impl FnOnce(Writer) -> Option<
     move |i| {
         let i = tuple((token(stmt.if_), space, token(stmt.open)))(i)?;
         let i = alt(
-            single_line(tuple((space, expression(&stmt.condition), space))),
+            single_line(tuple((
+                format(|f| f.spaces_in_expr_brackets, space),
+                expression(&stmt.condition),
+                format(|f| f.spaces_in_expr_brackets, space),
+            ))),
             tuple((
                 indented(pair(empty_line, expression(&stmt.condition))),
                 empty_line,
@@ -132,21 +150,21 @@ fn if_statement<'s>(stmt: &'s IfStatement<'s>) -> impl FnOnce(Writer) -> Option<
                 else_body,
             } => {
                 let i = statement_type_body_for_else(body)(i)?;
-                let i = space(i)?;
-                let i = token(else_)(i)?;
+                let i = empty_line(i)?;
+                let i = token_ignoring_blank_lines(else_)(i)?;
                 statement_type_body(else_body)(i)
             }
         }
     }
 }
 
-/// Like statement_type_body but ensures the body ends so `else` can follow on the same line.
+/// Format body before an `else` clause. In Allman style, `else` goes on its own line.
 fn statement_type_body_for_else<'s>(
     body: &'s Statement<'s>,
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| match &body.ty {
         StatementType::Block(b) => {
-            let i = space(i)?;
+            let i = empty_line(i)?;
             let i = block_statement(b)(i)?;
             opt(body.semicolon, |t| discard_token(t))(i)
         }
@@ -161,7 +179,11 @@ fn while_statement<'s>(stmt: &'s WhileStatement<'s>) -> impl FnOnce(Writer) -> O
     move |i| {
         let i = tuple((token(stmt.while_), space, token(stmt.open)))(i)?;
         let i = alt(
-            single_line(tuple((space, expression(&stmt.condition), space))),
+            single_line(tuple((
+                format(|f| f.spaces_in_expr_brackets, space),
+                expression(&stmt.condition),
+                format(|f| f.spaces_in_expr_brackets, space),
+            ))),
             tuple((
                 indented(pair(empty_line, expression(&stmt.condition))),
                 empty_line,
@@ -179,7 +201,7 @@ fn do_while_statement<'s>(
         let i = token(stmt.do_)(i)?;
         let i = match &stmt.body.ty {
             StatementType::Block(b) => {
-                let i = space(i)?;
+                let i = empty_line(i)?;
                 let i = block_statement(b)(i)?;
                 opt(stmt.body.semicolon, |t| discard_token(t))(i)?
             }
@@ -188,11 +210,13 @@ fn do_while_statement<'s>(
                 empty_line(i)?
             }
         };
-        let i = space(i)?;
+        let i = empty_line(i)?;
         let i = token(stmt.while_)(i)?;
         let i = space(i)?;
         let i = token(stmt.open)(i)?;
+        let i = format(|f| f.spaces_in_expr_brackets, space)(i)?;
         let i = expression(&stmt.condition)(i)?;
+        let i = format(|f| f.spaces_in_expr_brackets, space)(i)?;
         token(stmt.close)(i)
     }
 }
@@ -205,12 +229,12 @@ fn switch_statement<'s>(
             token(stmt.switch),
             space,
             token(stmt.open_condition),
-            space,
+            format(|f| f.spaces_in_expr_brackets, space),
             expression(&stmt.condition),
-            space,
+            format(|f| f.spaces_in_expr_brackets, space),
             token(stmt.close_condition),
         ))(i)?;
-        let i = space(i)?;
+        let i = empty_line(i)?;
         let i = token(stmt.open_cases)(i)?;
         let i = indented(|i| {
             iter(stmt.cases.iter().map(|case| {
@@ -236,7 +260,12 @@ fn switch_statement<'s>(
 
 fn for_statement<'s>(stmt: &'s ForStatement<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| {
-        let i = tuple((token(stmt.for_), space, token(stmt.open)))(i)?;
+        let i = tuple((
+            token(stmt.for_),
+            space,
+            token(stmt.open),
+            format(|f| f.spaces_in_expr_brackets, space),
+        ))(i)?;
         let i = opt(stmt.initializer.as_ref(), |init| {
             move |i: Writer| match init {
                 ForDefinition::Expression(expr) => expression(expr)(i),
@@ -249,6 +278,7 @@ fn for_statement<'s>(stmt: &'s ForStatement<'s>) -> impl FnOnce(Writer) -> Optio
         let i = token(stmt.semicolon_2)(i)?;
         let i = space(i)?;
         let i = opt(stmt.increment.as_deref(), expression)(i)?;
+        let i = format(|f| f.spaces_in_expr_brackets, space)(i)?;
         let i = token(stmt.close)(i)?;
         statement_type_body(&stmt.body)(i)
     }
@@ -258,7 +288,12 @@ fn foreach_statement<'s>(
     stmt: &'s ForeachStatement<'s>,
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| {
-        let i = tuple((token(stmt.foreach), space, token(stmt.open)))(i)?;
+        let i = tuple((
+            token(stmt.foreach),
+            space,
+            token(stmt.open),
+            format(|f| f.spaces_in_expr_brackets, space),
+        ))(i)?;
         let i = opt(stmt.index.as_ref(), |idx| {
             tuple((
                 opt(idx.type_.as_ref(), |ty| pair(type_format(ty), space)),
@@ -270,6 +305,7 @@ fn foreach_statement<'s>(
         let i = opt(stmt.value_type.as_ref(), |ty| pair(type_format(ty), space))(i)?;
         let i = identifier(&stmt.value_name)(i)?;
         let i = tuple((space, token(stmt.in_), space, expression(&stmt.array)))(i)?;
+        let i = format(|f| f.spaces_in_expr_brackets, space)(i)?;
         let i = token(stmt.close)(i)?;
         statement_type_body(&stmt.body)(i)
     }
@@ -379,8 +415,9 @@ pub fn class_definition<'s>(
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| {
         let i = opt(def.extends.as_ref(), |ext| {
-            tuple((token(ext.extends), space, expression(&ext.name), space))
+            tuple((token(ext.extends), space, expression(&ext.name)))
         })(i)?;
+        let i = empty_line(i)?;
         let i = token(def.open)(i)?;
         if def.members.is_empty() {
             return token(def.close)(i);
@@ -457,7 +494,7 @@ fn try_catch_statement<'s>(
         let i = token(stmt.try_)(i)?;
         let i = match &stmt.body.ty {
             StatementType::Block(b) => {
-                let i = space(i)?;
+                let i = empty_line(i)?;
                 let i = block_statement(b)(i)?;
                 opt(stmt.body.semicolon, |t| discard_token(t))(i)?
             }
@@ -466,12 +503,14 @@ fn try_catch_statement<'s>(
                 empty_line(i)?
             }
         };
-        let i = space(i)?;
+        let i = empty_line(i)?;
         let i = tuple((
             token(stmt.catch),
             space,
             token(stmt.open),
+            format(|f| f.spaces_in_expr_brackets, space),
             identifier(&stmt.catch_name),
+            format(|f| f.spaces_in_expr_brackets, space),
             token(stmt.close),
         ))(i)?;
         statement_type_body(&stmt.catch_body)(i)
@@ -499,13 +538,9 @@ fn enum_definition_statement<'s>(
     stmt: &'s EnumDefinitionStatement<'s>,
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| {
-        let i = tuple((
-            token(stmt.enum_),
-            space,
-            identifier(&stmt.name),
-            space,
-            token(stmt.open),
-        ))(i)?;
+        let i = tuple((token(stmt.enum_), space, identifier(&stmt.name)))(i)?;
+        let i = empty_line(i)?;
+        let i = token(stmt.open)(i)?;
         if stmt.entries.is_empty() {
             return token(stmt.close)(i);
         }
@@ -532,7 +567,9 @@ fn delay_thread_statement<'s>(
     tuple((
         token(stmt.delay_thread),
         token(stmt.open),
+        format(|f| f.spaces_in_expr_brackets, space),
         expression(&stmt.duration),
+        format(|f| f.spaces_in_expr_brackets, space),
         token(stmt.close),
         space,
         expression(&stmt.value),

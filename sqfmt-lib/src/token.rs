@@ -23,7 +23,27 @@ pub fn token_without_trailing<'s>(
     move |mut i| {
         // before_lines are structural (comments on lines above this token) and should
         // be emitted even in single_line mode, they don't affect expression width.
-        i = i.with_allow_newlines(token_before_lines(&token.before_lines))?;
+        // However, blank-line separators should be suppressed in single_line mode to
+        // prevent them from breaking the single-line layout.
+        //
+        // If before_lines contain actual comments, reject in single_line mode:
+        // emitting them would produce newlines via with_allow_newlines, making the
+        // output multi-line even though single_line mode doesn't formally fail.
+        // This caused arrays with commented-out elements to produce broken output.
+        if i.is_single_line()
+            && token
+                .before_lines
+                .iter()
+                .any(|line| !line.comments.is_empty())
+        {
+            return None;
+        }
+
+        let suppress_blank_separators = i.is_single_line();
+        i = i.with_allow_newlines(token_before_lines(
+            &token.before_lines,
+            suppress_blank_separators,
+        ))?;
 
         i = cond_or(
             token.comments.is_empty(),
@@ -45,10 +65,55 @@ pub fn token_without_trailing<'s>(
     }
 }
 
+/// Like `token_without_trailing`, but ignores blank-line separators from before_lines.
+/// Useful for tokens like closing braces where blank lines before them are not meaningful.
+pub fn token_ignoring_blank_lines<'s>(
+    token: &'s Token<'s>,
+) -> impl FnOnce(Writer) -> Option<Writer> + 's {
+    move |mut i| {
+        // Emit only before_lines that have comments, skip blank separators
+        for before_line in &token.before_lines {
+            if !before_line.comments.is_empty() {
+                i = i.with_allow_newlines(pair(
+                    inline_comment_list(&before_line.comments),
+                    empty_line,
+                ))?;
+            }
+        }
+
+        i = cond_or(
+            token.comments.is_empty(),
+            token_type(token.ty),
+            alt(
+                single_line(pair(
+                    single_line_comment_list(&token.comments),
+                    token_type(token.ty),
+                )),
+                tuple((
+                    multi_line_comment_list(&token.comments),
+                    empty_line,
+                    token_type(token.ty),
+                )),
+            ),
+        )(i)?;
+
+        token_trailing(token)(i)
+    }
+}
+
 /// Emit just the trailing (new_line) comment of a token, if any.
 pub fn token_trailing<'s>(token: &'s Token<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |mut i| {
-        if let Some(line) = &token.new_line {
+        if let Some(line) = &token.new_line
+            && !line.comments.is_empty()
+        {
+            // Trailing comments require newlines (`// comment\n`), which are
+            // incompatible with single_line mode. Callers that need single_line should
+            // use token_without_trailing() inside single_line, then emit trailing
+            // separately with with_allow_newlines(token_trailing(...)).
+            if i.is_single_line() {
+                return None;
+            }
             i = i.with_allow_newlines(pair(space, inline_comment_list_no_wrap(&line.comments)))?;
         }
         Some(i)
@@ -58,16 +123,25 @@ pub fn token_trailing<'s>(token: &'s Token<'s>) -> impl FnOnce(Writer) -> Option
 // Prints comments around a token, but ignores the token itself
 pub fn discard_token<'s>(token: &'s Token<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |mut i| {
-        if token.new_line.is_some() && i.is_single_line() {
+        // Only reject in single_line mode if there are comments to emit on the new_line.
+        // An empty new_line (just a line break, no comments) doesn't need to be emitted.
+        if token
+            .new_line
+            .as_ref()
+            .is_some_and(|line| !line.comments.is_empty())
+            && i.is_single_line()
+        {
             return None;
         }
 
         i = pair(
-            token_before_lines(&token.before_lines),
+            token_before_lines(&token.before_lines, false),
             inline_comment_list(&token.comments),
         )(i)?;
 
-        if let Some(line) = &token.new_line {
+        if let Some(line) = &token.new_line
+            && !line.comments.is_empty()
+        {
             i = tuple((
                 space,
                 inline_comment_list_no_wrap(&line.comments),
@@ -81,6 +155,7 @@ pub fn discard_token<'s>(token: &'s Token<'s>) -> impl FnOnce(Writer) -> Option<
 
 fn token_before_lines<'s>(
     lines: &'s [TokenLine<'s>],
+    suppress_blank_separators: bool,
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |mut i| {
         // Count leading empty lines (blank lines in the source).
@@ -91,7 +166,8 @@ fn token_before_lines<'s>(
 
         // If there were blank lines in the source, preserve one blank line separator.
         // Only emit if the writer already has content (avoids leading blank at start of output).
-        if leading_empties > 0 && i.has_content() {
+        // Suppress in single-line mode to avoid breaking single-line layout.
+        if leading_empties > 0 && i.has_content() && !suppress_blank_separators {
             i = new_line(i)?;
         }
 
@@ -349,13 +425,7 @@ mod test {
             r#"
 /* Short comment */
 /**
- * This is a doc
- * comment. It also
- * has a lot of
- * text, so it will
- * span multiple
- * lines.
- */
+This is a doc comment. It also has a lot of text, so it will span multiple lines.*/
 /* Also short */
 hello"#
                 .trim_start()
@@ -396,9 +466,7 @@ hello"#
 /* Short comment */
 // Woah there
 # Scripts!
-/**
- * more multi lines
- */
+/* more multi lines */
 hello"#
                 .trim_start()
         );

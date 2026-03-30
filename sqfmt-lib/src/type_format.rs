@@ -1,4 +1,4 @@
-use crate::combinators::{iter, opt, pair, space, tuple};
+use crate::combinators::{format, iter, opt, pair, space, tuple};
 use crate::shared::identifier;
 use crate::token::token;
 use crate::writer::Writer;
@@ -14,7 +14,9 @@ pub fn type_format<'s>(ty: &'s Type<'s>) -> impl FnOnce(Writer) -> Option<Writer
         Type::Array(t) => tuple((
             type_format(&t.base),
             token(t.open),
+            format(|f| f.spaces_in_expr_brackets, space),
             crate::expression::expression(&t.len),
+            format(|f| f.spaces_in_expr_brackets, space),
             token(t.close),
         ))(i),
         Type::Generic(t) => generic_type(t)(i),
@@ -22,7 +24,13 @@ pub fn type_format<'s>(ty: &'s Type<'s>) -> impl FnOnce(Writer) -> Option<Writer
             opt(t.return_type.as_deref(), |rt| pair(type_format(rt), space)),
             token(t.functionref),
             token(t.open),
-            opt(t.params.as_ref(), |params| function_ref_params(params)),
+            opt(t.params.as_ref(), |params| {
+                tuple((
+                    format(|f| f.spaces_in_expr_brackets, space),
+                    function_ref_params(params),
+                    format(|f| f.spaces_in_expr_brackets, space),
+                ))
+            }),
             token(t.close),
         ))(i),
         Type::Struct(t) => tuple((
@@ -39,7 +47,9 @@ fn generic_type<'s>(t: &'s GenericType<'s>) -> impl FnOnce(Writer) -> Option<Wri
     tuple((
         type_format(&t.base),
         token(t.open),
+        format(|f| f.spaces_in_expr_brackets, space),
         separated_list_trailing_types(&t.params),
+        format(|f| f.spaces_in_expr_brackets, space),
         token(t.close),
     ))
 }

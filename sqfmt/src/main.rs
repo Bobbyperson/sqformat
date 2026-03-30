@@ -91,8 +91,12 @@ fn main() {
             let source = match std::fs::read_to_string(file) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("{}: {}", file, e);
-                    had_error = true;
+                    if e.kind() == io::ErrorKind::InvalidData {
+                        eprintln!("{}: skipping (not valid UTF-8)", file);
+                    } else {
+                        eprintln!("{}: {}", file, e);
+                        had_error = true;
+                    }
                     continue;
                 }
             };

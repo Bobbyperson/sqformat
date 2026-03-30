@@ -59,14 +59,14 @@ mod integration_tests {
     fn format_empty_function() {
         let input = "void function Foo() {}";
         let output = format_test(input);
-        assert_eq!(output, "void function Foo() {}");
+        assert_eq!(output, "void function Foo()\n{}");
     }
 
     #[test]
     fn format_function_with_body() {
         let input = "void function Foo() { print(\"hello\") }";
         let output = format_test(input);
-        assert_eq!(output, "void function Foo() {\n    print(\"hello\")\n}");
+        assert_eq!(output, "void function Foo()\n{\n    print( \"hello\" )\n}");
     }
 
     #[test]
@@ -75,7 +75,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test() {\n    if ( x ) {\n        a()\n    } else {\n        b()\n    }\n}"
+            "void function Test()\n{\n    if ( x )\n    {\n        a()\n    }\n    else\n    {\n        b()\n    }\n}"
         );
     }
 
@@ -83,7 +83,7 @@ mod integration_tests {
     fn format_variable_definition() {
         let input = "void function Test() { int x = 1 + 2 }";
         let output = format_test(input);
-        assert_eq!(output, "void function Test() {\n    int x = 1 + 2\n}");
+        assert_eq!(output, "void function Test()\n{\n    int x = 1 + 2\n}");
     }
 
     #[test]
@@ -92,7 +92,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test() {\n    for (int i = 0; i < 10; i++)\n        print(i)\n}"
+            "void function Test()\n{\n    for ( int i = 0; i < 10; i++ )\n        print( i )\n}"
         );
     }
 
@@ -102,7 +102,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test() {\n    local arr = [ 1, 2, 3 ]\n}"
+            "void function Test()\n{\n    local arr = [ 1, 2, 3 ]\n}"
         );
     }
 
@@ -112,7 +112,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "int function Add(int a, int b) {\n    return a + b\n}"
+            "int function Add( int a, int b )\n{\n    return a + b\n}"
         );
     }
 
@@ -120,7 +120,7 @@ mod integration_tests {
     fn format_enum() {
         let input = "enum Dir { NORTH = 0, SOUTH = 1 }";
         let output = format_test(input);
-        assert_eq!(output, "enum Dir {\n    NORTH = 0,\n    SOUTH = 1\n}");
+        assert_eq!(output, "enum Dir\n{\n    NORTH = 0,\n    SOUTH = 1\n}");
     }
 
     #[test]
@@ -129,7 +129,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test() {\n    switch ( x ) {\n        case 0:\n            print(\"a\")\n            break\n        case 1:\n            print(\"b\")\n            break\n    }\n}"
+            "void function Test()\n{\n    switch ( x )\n    {\n        case 0:\n            print( \"a\" )\n            break\n        case 1:\n            print( \"b\" )\n            break\n    }\n}"
         );
     }
 
@@ -139,7 +139,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test() {\n    try {\n        Danger()\n    } catch (ex) {\n        print(ex)\n    }\n}"
+            "void function Test()\n{\n    try\n    {\n        Danger()\n    }\n    catch ( ex )\n    {\n        print( ex )\n    }\n}"
         );
     }
 
@@ -154,21 +154,27 @@ mod integration_tests {
     fn format_thread_statements() {
         let input = "void function Test() { thread DoThing() }";
         let output = format_test(input);
-        assert_eq!(output, "void function Test() {\n    thread DoThing()\n}");
+        assert_eq!(output, "void function Test()\n{\n    thread DoThing()\n}");
     }
 
     #[test]
     fn format_ternary() {
         let input = "void function Test() { local x = a ? b : c }";
         let output = format_test(input);
-        assert_eq!(output, "void function Test() {\n    local x = a ? b : c\n}");
+        assert_eq!(
+            output,
+            "void function Test()\n{\n    local x = a ? b : c\n}"
+        );
     }
 
     #[test]
     fn format_nested_calls() {
         let input = "void function Test() { Foo(Bar(Baz())) }";
         let output = format_test(input);
-        assert_eq!(output, "void function Test() {\n    Foo(Bar(Baz()))\n}");
+        assert_eq!(
+            output,
+            "void function Test()\n{\n    Foo( Bar( Baz() ) )\n}"
+        );
     }
 
     #[test]
@@ -177,7 +183,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test() {\n    while ( alive ) {\n        DoThing()\n    }\n}"
+            "void function Test()\n{\n    while ( alive )\n    {\n        DoThing()\n    }\n}"
         );
     }
 
@@ -187,7 +193,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test() {\n    do {\n        DoThing()\n    } while (alive)\n}"
+            "void function Test()\n{\n    do\n    {\n        DoThing()\n    }\n    while ( alive )\n}"
         );
     }
 
@@ -197,7 +203,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test() {\n    foreach (val in arr)\n        print(val)\n}"
+            "void function Test()\n{\n    foreach ( val in arr )\n        print( val )\n}"
         );
     }
 
@@ -205,7 +211,7 @@ mod integration_tests {
     fn format_class() {
         let input = "class Foo { x = 1 y = 2 }";
         let output = format_test(input);
-        assert_eq!(output, "class Foo {\n    x = 1\n    y = 2\n}");
+        assert_eq!(output, "class Foo\n{\n    x = 1\n    y = 2\n}");
     }
 
     #[test]
@@ -229,7 +235,61 @@ mod integration_tests {
         );
         assert_eq!(
             output,
-            "void function T() {\n    fp.thirdPersonAnim =\n        EVAC_EMBARK_ANIMS_3P[slot]\n}"
+            "void function T()\n{\n    fp.thirdPersonAnim =\n        EVAC_EMBARK_ANIMS_3P[ slot ]\n}"
+        );
+    }
+
+    // Regression tests for array formatting idempotency bugs
+
+    #[test]
+    fn array_commented_out_element_idempotent() {
+        // Bug 1: commented-out array element pulled rest of array onto comment line
+        let input = "struct {\n    array<string> names = [\n        // \"Arc Pylon\",\n        \"Arc Ball\"\n    ]\n} file";
+        let output = format_test(input);
+        let output2 = format_test(&output);
+        assert_eq!(output, output2, "not idempotent");
+        assert!(
+            output.contains("[\n        // \"Arc Pylon\",\n        \"Arc Ball\"\n    ]"),
+            "comment should stay on its own line inside array: {output}"
+        );
+    }
+
+    #[test]
+    fn array_trailing_comment_on_last_element_idempotent() {
+        // Bug 2: last array element with trailing comment gets broken on 2nd pass
+        let input = "struct {\n    float[2][3] offsets = [\n        [0.2, 0.0],\n        [0.2, 2.0], // right\n        [0.2, -2.0], // left\n    ]\n} file";
+        let output = format_test(input);
+        let output2 = format_test(&output);
+        assert_eq!(output, output2, "not idempotent");
+        assert!(
+            output.contains("[ 0.2, -2.0 ] // left"),
+            "last element should stay single-line with trailing comment: {output}"
+        );
+    }
+
+    #[test]
+    fn array_leading_comments_idempotent() {
+        // Bug 3: multi-line array with leading comments gets collapsed then re-expanded
+        let input = "const array<string> EVENTS = \n[\n    // these are disabled\n    // needs to re-enable them\n    \"DoomTitan\",\n    \"DoomAutoTitan\"\n]";
+        let output = format_test(input);
+        let output2 = format_test(&output);
+        assert_eq!(output, output2, "not idempotent");
+        assert!(
+            output.contains("[\n    // these are disabled"),
+            "comments should stay inside array on their own lines: {output}"
+        );
+    }
+
+    #[test]
+    fn array_last_element_no_comma_trailing_comment_idempotent() {
+        // Bug 4: last element without trailing comma loses its trailing comment stability
+        let input = "const array< array< string > > ANIMS = [\n    [ \"a\", \"b\", \"c\" ], // first\n    [ \"d\", \"e\", \"f\" ], // second\n    [ \"g\", \"h\", \"i\" ] // third\n]";
+        let output = format_test(input);
+        let output2 = format_test(&output);
+        assert_eq!(output, output2, "not idempotent");
+        assert!(
+            output.contains("[ \"g\", \"h\", \"i\" ] // third"),
+            "last element should stay single-line with trailing comment: {output}"
         );
     }
 
@@ -247,7 +307,7 @@ mod integration_tests {
         );
         assert_eq!(
             output,
-            "void function example(entity player) {\n\tif ( IsValid(player) ) {\n\t\tif ( IsAlive(player) ) {\n\t\t\tif ( player.isMechanical() ) {\n\t\t\t\tplayer.SetMaxHealth(100)\n\t\t\t}\n\t\t}\n\t}\n}"
+            "void function example( entity player )\n{\n\tif ( IsValid( player ) )\n\t{\n\t\tif ( IsAlive( player ) )\n\t\t{\n\t\t\tif ( player.isMechanical() )\n\t\t\t{\n\t\t\t\tplayer.SetMaxHealth( 100 )\n\t\t\t}\n\t\t}\n\t}\n}"
         );
     }
 }
