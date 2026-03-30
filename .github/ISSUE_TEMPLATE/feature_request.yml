@@ -1,0 +1,19 @@
+name: Feature Request
+description: Suggest a new feature or formatting behavior
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What would you like sqformat to do?
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Example
+      description: If applicable, show an input/output example of the desired behavior.
+      render: squirrel
+    validations:
+      required: false

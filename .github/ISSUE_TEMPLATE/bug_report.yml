@@ -1,0 +1,42 @@
+name: Bug Report
+description: Report incorrect, undesirable, or unexpected formatting output
+labels: ["bug"]
+body:
+  - type: textarea
+    id: input
+    attributes:
+      label: Input
+      description: The Squirrel source code that produces incorrect output. Minimal reproductions are appreciated.
+      render: squirrel
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Output
+      description: What you expected the formatted output to look like.
+      render: squirrel
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Output
+      description: What sqformat actually produced.
+      render: squirrel
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: sqformat version
+      description: Output of `sqformat --version` or the commit hash you're using.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Any other relevant details (custom config, idempotency issue, etc.).
+    validations:
+      required: false

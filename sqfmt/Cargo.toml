@@ -1,9 +1,10 @@
 [package]
 name = "sqformat"
-version = "0.1.0"
-edition = "2021"
+version = "0.0.1"
+edition = "2024"
+license = "MIT"
 
 [dependencies]
 sqparse = { git = "https://github.com/cpdt/sqparse.git", rev = "ab8898a96b351693c4da4c5e0b545fccc0b70ea7" }
-clap = { version = "3.0", features = ["derive"] }
+clap = { version = "4.6.0", features = ["derive"] }
 sqfmt-lib = { path = "../sqfmt-lib" }

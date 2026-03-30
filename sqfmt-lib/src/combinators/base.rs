@@ -1,5 +1,5 @@
-use crate::combinators::tuple_format::Tuple;
 use crate::combinators::Formatter;
+use crate::combinators::tuple_format::Tuple;
 
 impl<I, O, F> Formatter<I, O> for F
 where
@@ -49,11 +49,7 @@ where
     F: Formatter<I, I>,
 {
     move |i| {
-        if cond {
-            f.format(i)
-        } else {
-            Some(i)
-        }
+        if cond { f.format(i) } else { Some(i) }
     }
 }
 
@@ -63,11 +59,7 @@ where
     F2: Formatter<I, I>,
 {
     move |i| {
-        if cond {
-            t.format(i)
-        } else {
-            f.format(i)
-        }
+        if cond { t.format(i) } else { f.format(i) }
     }
 }
 

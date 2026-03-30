@@ -28,6 +28,31 @@ jobs:
         with:
           toolchain: stable
       - run: cargo test --all-features
+  idempotency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crusty-pie/toolchain@v1
+        with:
+          toolchain: stable
+      - run: cargo build --release
+      - name: Check idempotency on test files
+        run: |
+          failed=0
+          for f in sqfmt/test_files/*.nut sqfmt/test_files/*.gnut; do
+            [ -f "$f" ] || continue
+            pass1=$(./target/release/sqformat "$f" 2>/dev/null) || continue
+            pass2=$(echo "$pass1" | ./target/release/sqformat 2>/dev/null) || continue
+            if [ "$pass1" != "$pass2" ]; then
+              echo "FAIL: $f is not idempotent"
+              diff <(echo "$pass1") <(echo "$pass2")
+              failed=1
+            fi
+          done
+          if [ "$failed" -eq 1 ]; then
+            exit 1
+          fi
+          echo "All test files are idempotent"
   docs:
     runs-on: ubuntu-latest
     steps:

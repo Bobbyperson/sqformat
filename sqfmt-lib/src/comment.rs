@@ -2,22 +2,36 @@ use crate::combinators::{definitely_multi_line, empty_line, pair};
 use crate::writer::Writer;
 use sqparse::token::Comment;
 
-const SINGLE_LINE_START: &'static str = "// ";
-const SCRIPT_LINE_START: &'static str = "# ";
-const SINGLE_MULTI_START: &'static str = "/* ";
-const SINGLE_MULTI_END: &'static str = " */";
-const DOC_OPEN: &'static str = "/**";
-const DOC_LINE_START: &'static str = " * ";
-const DOC_CLOSE: &'static str = " */";
+const SINGLE_LINE_START: &str = "// ";
+const SCRIPT_LINE_START: &str = "# ";
+const SINGLE_MULTI_START: &str = "/* ";
+const SINGLE_MULTI_END: &str = " */";
+const DOC_OPEN: &str = "/**";
+const DOC_LINE_START: &str = " * ";
+const DOC_CLOSE: &str = " */";
 
 pub fn comment<'s>(comment: &'s Comment<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| match comment {
-        Comment::MultiLine(val) => match strip_doc_prefix(*val) {
+        Comment::MultiLine(val) => match strip_doc_prefix(val) {
             Some(doc_text) => doc_comment(TextWrapIter::new(doc_text, true))(i),
-            None => multi_line_comment(*val)(i),
+            None => multi_line_comment(val)(i),
         },
-        Comment::SingleLine(val) => single_line_comment(SINGLE_LINE_START, *val)(i),
-        Comment::ScriptStyle(val) => single_line_comment(SCRIPT_LINE_START, *val)(i),
+        Comment::SingleLine(val) => single_line_comment(SINGLE_LINE_START, val)(i),
+        Comment::ScriptStyle(val) => single_line_comment(SCRIPT_LINE_START, val)(i),
+    }
+}
+
+/// Like `comment`, but does not wrap single-line (`//`) or script-style (`#`) comments.
+/// Used for trailing comments where wrapping would cause continuation lines to be
+/// re-attributed to the next token on re-parse, breaking idempotency.
+pub fn comment_no_wrap<'s>(comment: &'s Comment<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
+    move |i| match comment {
+        Comment::MultiLine(val) => match strip_doc_prefix(val) {
+            Some(doc_text) => doc_comment(TextWrapIter::new(doc_text, true))(i),
+            None => multi_line_comment(val)(i),
+        },
+        Comment::SingleLine(val) => single_line_comment_no_wrap(SINGLE_LINE_START, val)(i),
+        Comment::ScriptStyle(val) => single_line_comment_no_wrap(SCRIPT_LINE_START, val)(i),
     }
 }
 
@@ -71,6 +85,18 @@ fn single_line_comment<'s>(
         }
 
         Some(i)
+    })
+}
+
+fn single_line_comment_no_wrap<'s>(
+    line_start: &'s str,
+    val: &'s str,
+) -> impl FnOnce(Writer) -> Option<Writer> + 's {
+    definitely_multi_line(move |i| {
+        let trimmed = TextWrapIter::new(val, false)
+            .next(usize::MAX / 2)
+            .unwrap_or("");
+        i.write(line_start)?.write(trimmed)?.write_new_line()
     })
 }
 

@@ -42,11 +42,7 @@ where
     F: FnOnce(Writer) -> Option<Writer>,
 {
     move |i| {
-        if c(i.format()) {
-            f(i)
-        } else {
-            Some(i)
-        }
+        if c(i.format()) { f(i) } else { Some(i) }
     }
 }
 

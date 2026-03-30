@@ -1,15 +1,29 @@
 use crate::combinators::{
     alt, cond_or, empty_line, iter, new_line, pair, single_line, space, tuple,
 };
-use crate::comment::comment;
+use crate::comment::{comment, comment_no_wrap};
 use crate::writer::Writer;
 use sqparse::token::{
     Comment, LiteralBase, LiteralToken, StringToken, TerminalToken, Token, TokenLine, TokenType,
 };
 
 pub fn token<'s>(token: &'s Token<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
+    move |i| {
+        let i = token_without_trailing(token)(i)?;
+        token_trailing(token)(i)
+    }
+}
+
+/// Format a token's before_lines, inline comments, and type, but NOT the trailing (new_line)
+/// comment. Use with `token_trailing` to emit the trailing comment separately, this allows
+/// callers to put the token inside `single_line` while emitting trailing `//` comments outside.
+pub fn token_without_trailing<'s>(
+    token: &'s Token<'s>,
+) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |mut i| {
-        i = token_before_lines(&token.before_lines)(i)?;
+        // before_lines are structural (comments on lines above this token) and should
+        // be emitted even in single_line mode, they don't affect expression width.
+        i = i.with_allow_newlines(token_before_lines(&token.before_lines))?;
 
         i = cond_or(
             token.comments.is_empty(),
@@ -27,10 +41,16 @@ pub fn token<'s>(token: &'s Token<'s>) -> impl FnOnce(Writer) -> Option<Writer> 
             ),
         )(i)?;
 
-        if let Some(line) = &token.new_line {
-            i = pair(space, inline_comment_list(&line.comments))(i)?;
-        }
+        Some(i)
+    }
+}
 
+/// Emit just the trailing (new_line) comment of a token, if any.
+pub fn token_trailing<'s>(token: &'s Token<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
+    move |mut i| {
+        if let Some(line) = &token.new_line {
+            i = i.with_allow_newlines(pair(space, inline_comment_list_no_wrap(&line.comments)))?;
+        }
         Some(i)
     }
 }
@@ -48,7 +68,11 @@ pub fn discard_token<'s>(token: &'s Token<'s>) -> impl FnOnce(Writer) -> Option<
         )(i)?;
 
         if let Some(line) = &token.new_line {
-            i = tuple((space, inline_comment_list(&line.comments), empty_line))(i)?;
+            i = tuple((
+                space,
+                inline_comment_list_no_wrap(&line.comments),
+                empty_line,
+            ))(i)?;
         }
 
         Some(i)
@@ -59,7 +83,19 @@ fn token_before_lines<'s>(
     lines: &'s [TokenLine<'s>],
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |mut i| {
-        let before_lines_iter = lines.iter().skip_while(|line| line.comments.is_empty());
+        // Count leading empty lines (blank lines in the source).
+        let leading_empties = lines
+            .iter()
+            .take_while(|line| line.comments.is_empty())
+            .count();
+
+        // If there were blank lines in the source, preserve one blank line separator.
+        // Only emit if the writer already has content (avoids leading blank at start of output).
+        if leading_empties > 0 && i.has_content() {
+            i = new_line(i)?;
+        }
+
+        let before_lines_iter = lines.iter().skip(leading_empties);
 
         let mut was_last_empty = false;
         for before_line in before_lines_iter {
@@ -97,6 +133,25 @@ fn inline_comment_list<'s>(
     alt(
         single_line(single_line_comment_list(comments)),
         multi_line_comment_list(comments),
+    )
+}
+
+fn multi_line_comment_list_no_wrap<'s>(
+    comments: &'s [Comment<'s>],
+) -> impl FnOnce(Writer) -> Option<Writer> + 's {
+    iter(
+        comments
+            .iter()
+            .map(|c| tuple((comment_no_wrap(c), empty_line))),
+    )
+}
+
+fn inline_comment_list_no_wrap<'s>(
+    comments: &'s [Comment<'s>],
+) -> impl FnOnce(Writer) -> Option<Writer> + 's {
+    alt(
+        single_line(single_line_comment_list(comments)),
+        multi_line_comment_list_no_wrap(comments),
     )
 }
 
@@ -280,8 +335,10 @@ mod test {
             range: 0..0,
             comments: vec![
                 Comment::MultiLine("Short comment"),
-                Comment::MultiLine("*\nThis is a doc comment. It also has a lot of text, so it will span multiple lines."),
-                Comment::MultiLine("Also short")
+                Comment::MultiLine(
+                    "*\nThis is a doc comment. It also has a lot of text, so it will span multiple lines.",
+                ),
+                Comment::MultiLine("Also short"),
             ],
             before_lines: Vec::new(),
             new_line: None,
@@ -456,15 +513,9 @@ hello"#
             }),
         };
         let val = test_write(token(&t));
-        assert_eq!(
-            val,
-            r#"
-hello // yes, this
-// is some longer
-// form text.
-"#
-            .trim_start()
-        );
+        // Trailing comments are not wrapped to avoid idempotency issues
+        // (continuation lines would be re-attributed to the next token on re-parse)
+        assert_eq!(val, "hello // yes, this is some longer form text.\n");
     }
 
     #[test]

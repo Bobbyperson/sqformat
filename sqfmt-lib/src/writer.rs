@@ -1,18 +1,11 @@
 use crate::config::Format;
 use std::sync::Arc;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum EndToken {
-    NewLine,
-    Space,
-}
-
 #[derive(Clone)]
 struct WriterStore {
     lines: im::Vector<String>,
     current_line: String,
     remaining_columns: isize,
-    end_token: Option<EndToken>,
 }
 
 #[derive(Clone, Copy)]
@@ -37,7 +30,6 @@ impl Writer {
                 lines: im::Vector::new(),
                 current_line: String::new(),
                 remaining_columns,
-                end_token: None,
             }),
             config: WriteConfig {
                 is_single_line: false,
@@ -54,12 +46,12 @@ impl Writer {
         self.store.remaining_columns.max(0) as usize
     }
 
-    pub fn current_line_columns(&self) -> usize {
-        self.store.current_line.len()
-    }
-
     pub fn is_single_line(&self) -> bool {
         self.config.is_single_line
+    }
+
+    pub fn has_content(&self) -> bool {
+        !self.store.lines.is_empty() || !self.store.current_line.is_empty()
     }
 
     fn with_config<F: FnOnce(Self) -> Option<Self>>(
@@ -82,6 +74,16 @@ impl Writer {
         self.with_config(config, f)
     }
 
+    /// Temporarily suspend single_line mode so structural elements (before_lines, trailing
+    /// comments) can emit newlines without causing single_line to fail.
+    pub fn with_allow_newlines<F: FnOnce(Self) -> Option<Self>>(self, f: F) -> Option<Self> {
+        let config = WriteConfig {
+            is_single_line: false,
+            ..self.config
+        };
+        self.with_config(config, f)
+    }
+
     pub fn with_indent<F: FnOnce(Self) -> Option<Self>>(self, f: F) -> Option<Self> {
         let config = WriteConfig {
             indent_depth: self.config.indent_depth + 1,
@@ -90,10 +92,18 @@ impl Writer {
         self.with_config(config, f)
     }
 
-    pub fn empty_line(self) -> Option<Self> {
+    pub fn empty_line(mut self) -> Option<Self> {
         // todo(perf): store a flag on if the line has had non-whitespace added, instead of scanning
         // here?
         if self.store.current_line.trim().is_empty() {
+            // Ensure the indent on the current line matches the current config depth.
+            // This can get out of sync when trailing comments emit newlines at a different
+            // indent depth (e.g. inside an indented block) and then we leave that block.
+            let correct_indent = self.format.indent.repeat(self.config.indent_depth);
+            let store = Arc::make_mut(&mut self.store);
+            store.remaining_columns =
+                self.format.column_limit as isize - correct_indent.len() as isize;
+            store.current_line = correct_indent;
             Some(self)
         } else {
             self.write_new_line()
@@ -102,8 +112,6 @@ impl Writer {
 
     pub fn write_new_line(mut self) -> Option<Self> {
         if self.config.is_single_line {
-            println!("BREAK: appending newline to single-line writer");
-            println!("     > {}", self.store.current_line);
             return None;
         }
 
@@ -132,11 +140,6 @@ impl Writer {
         let written = self.write_without_breaking(text, text_columns);
 
         if written.config.is_single_line && written.store.remaining_columns < 0 {
-            println!(
-                "BREAK: overflowed line on single-line writer - {} remaining / {} columns",
-                written.store.remaining_columns, written.format.column_limit
-            );
-            println!("     > {}", written.store.current_line);
             None
         } else {
             Some(written)
@@ -154,15 +157,12 @@ impl Writer {
     }
 }
 
-impl ToString for Writer {
-    fn to_string(&self) -> String {
-        let mut val = String::new();
+impl std::fmt::Display for Writer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for line in &self.store.lines {
-            val.push_str(line.trim_end());
-            val.push('\n');
+            f.write_str(line.trim_end())?;
+            f.write_str("\n")?;
         }
-        val.push_str(&self.store.current_line.trim_end());
-
-        val
+        f.write_str(self.store.current_line.trim_end())
     }
 }

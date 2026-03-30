@@ -1,83 +1,77 @@
 use clap::Parser;
-use sqparse::token::TokenType;
-use std::time::Instant;
+use std::io::{self, Read};
 
-/// If no arguments are specified, it formats the code from standard input and writes the result
-/// to standard output.
+/// Squirrel code formatter.
 ///
-/// If files are given, it reformats the files. If -i is specified together with files, the
-/// files are edited in-place. Otherwise, the result is written to the standard output.
+/// If no files are given, reads from stdin and writes formatted code to stdout.
+/// If files are given, writes formatted output to stdout (or edits in-place with -i).
 #[derive(Parser, Debug)]
 #[clap(author, version)]
 struct Args {
-    /// Inplace edit files, if specified.
+    /// Edit files in-place (only valid with file arguments).
     #[clap(short)]
     inplace_edit: bool,
 
-    /// Path to a coding style configuration file, absolute or relative to the current working
-    /// directory.
-    #[clap(long)]
-    style: Option<String>,
-
+    /// Files to format.
     files: Vec<String>,
 }
 
-fn test_file(path: &str) {
-    let file_text = std::fs::read_to_string(path).unwrap();
-    println!(
-        "Processing {}... ({} KiB)",
-        path,
-        file_text.as_bytes().len() / 1024
-    );
-
-    let lex_start = Instant::now();
-    let maybe_tokens = sqparse::tokenize(&file_text, sqparse::Flavor::SquirrelRespawn);
-    let lex_elapsed = lex_start.elapsed();
-    println!("  tokenize: {}s", lex_elapsed.as_secs_f64());
-
-    let tokens = match maybe_tokens {
-        Ok(tokens) => tokens,
-        Err(why) => {
-            eprintln!("{}", why.display(&file_text, Some("Error")));
-            std::process::exit(1);
-        }
-    };
-
-    /*for token in &tokens {
-        match token.ty {
-            TokenType::Empty => print!("<empty> "),
-            TokenType::Terminal(terminal) => print!("{} ", terminal.as_str()),
-            TokenType::Literal(lit) => print!("{:?} ", lit),
-            TokenType::Identifier(id) => print!("[{}] ", id),
-        }
-    }
-    println!();*/
-
-    let parse_start = Instant::now();
-    let maybe_ast = sqparse::parse(&tokens, sqparse::Flavor::SquirrelRespawn);
-    let parse_elapsed = parse_start.elapsed();
-    println!("  parse: {}s", parse_elapsed.as_secs_f64());
-
-    match maybe_ast {
-        Ok(ast) => {} //println!("{:#?}", ast),
-        Err(why) => {
-            eprintln!("{}", why.display(&file_text, &tokens, Some("Error")));
-            std::process::exit(1);
-        }
-    }
+fn format_source(source: &str, filename: &str) -> Result<String, String> {
+    sqfmt_lib::format_source_default(source).map_err(|e| format!("{}: {}", filename, e))
 }
 
 fn main() {
     let args = Args::parse();
 
     if args.files.is_empty() {
-        for file in std::fs::read_dir("test_files_r2").unwrap() {
-            let path = file.unwrap().path();
-            test_file(path.to_str().unwrap());
+        // Read from stdin
+        let mut source = String::new();
+        io::stdin()
+            .read_to_string(&mut source)
+            .expect("Failed to read stdin");
+
+        match format_source(&source, "<stdin>") {
+            Ok(formatted) => {
+                print!("{}", formatted);
+            }
+            Err(e) => {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
         }
     } else {
+        let mut had_error = false;
+
         for file in &args.files {
-            test_file(file);
+            let source = match std::fs::read_to_string(file) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("{}: {}", file, e);
+                    had_error = true;
+                    continue;
+                }
+            };
+
+            match format_source(&source, file) {
+                Ok(formatted) => {
+                    if args.inplace_edit {
+                        if let Err(e) = std::fs::write(file, &formatted) {
+                            eprintln!("{}: {}", file, e);
+                            had_error = true;
+                        }
+                    } else {
+                        print!("{}", formatted);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{}", e);
+                    had_error = true;
+                }
+            }
+        }
+
+        if had_error {
+            std::process::exit(1);
         }
     }
 }
