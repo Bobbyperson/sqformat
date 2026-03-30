@@ -1,5 +1,6 @@
 use clap::Parser;
 use std::io::{self, Read};
+use std::path::Path;
 
 /// Squirrel code formatter.
 ///
@@ -12,8 +13,38 @@ struct Args {
     #[clap(short)]
     inplace_edit: bool,
 
-    /// Files to format.
+    /// Recursively format directories.
+    #[clap(short, long)]
+    recursive: bool,
+
+    /// Files or directories to format.
     files: Vec<String>,
+}
+
+const SQUIRREL_EXTENSIONS: &[&str] = &["nut", "gnut"];
+
+fn is_squirrel_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| SQUIRREL_EXTENSIONS.contains(&ext))
+}
+
+fn collect_squirrel_files(dir: &Path, out: &mut Vec<String>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("{}: {}", dir.display(), e);
+            return;
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_squirrel_files(&path, out);
+        } else if is_squirrel_file(&path) {
+            out.push(path.to_string_lossy().into_owned());
+        }
+    }
 }
 
 fn format_source(source: &str, filename: &str) -> Result<String, String> {
@@ -41,8 +72,22 @@ fn main() {
         }
     } else {
         let mut had_error = false;
+        let mut files: Vec<String> = Vec::new();
 
-        for file in &args.files {
+        for path in &args.files {
+            if Path::new(path).is_dir() {
+                if !args.recursive {
+                    eprintln!("{}: is a directory (use -r to format recursively)", path);
+                    had_error = true;
+                    continue;
+                }
+                collect_squirrel_files(Path::new(path), &mut files);
+            } else {
+                files.push(path.clone());
+            }
+        }
+
+        for file in &files {
             let source = match std::fs::read_to_string(file) {
                 Ok(s) => s,
                 Err(e) => {

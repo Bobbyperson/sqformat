@@ -33,6 +33,9 @@ sqformat path/to/file.gnut
 
 # Format multiple files in-place
 sqformat -i src/*.gnut src/*.nut
+
+# Recursively format a directory in-place
+sqformat -i -r src/
 ```
 
 ## Example
