@@ -44,12 +44,21 @@ pub fn type_format<'s>(ty: &'s Type<'s>) -> impl FnOnce(Writer) -> Option<Writer
 }
 
 fn generic_type<'s>(t: &'s GenericType<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
-    tuple((
-        type_format(&t.base),
-        token(t.open),
-        separated_list_trailing_types(&t.params),
-        token(t.close),
-    ))
+    // When the last type param is itself generic (ends with `>`), we must emit a space
+    // before the closing `>` to avoid `>>` being lexed as the bitshift operator.
+    let needs_closing_space =
+        matches!(*t.params.last_item, Type::Generic(_)) && t.params.trailing.is_none();
+    move |i: Writer| {
+        let i = type_format(&t.base)(i)?;
+        let i = token(t.open)(i)?;
+        let i = separated_list_trailing_types(&t.params)(i)?;
+        let i = if needs_closing_space {
+            i.write_space()
+        } else {
+            i
+        };
+        token(t.close)(i)
+    }
 }
 
 fn reference_type<'s>(t: &'s ReferenceType<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {

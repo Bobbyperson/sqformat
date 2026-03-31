@@ -580,7 +580,7 @@ fn vector_expression<'s>(
     alt(
         single_line(tuple((
             token(expr.open),
-            format(|f| f.spaces_in_expr_brackets, space),
+            space,
             expression(&expr.x),
             token(expr.comma_1),
             space,
@@ -588,7 +588,7 @@ fn vector_expression<'s>(
             token(expr.comma_2),
             space,
             expression(&expr.z),
-            format(|f| f.spaces_in_expr_brackets, space),
+            space,
             token(expr.close),
         ))),
         tuple((

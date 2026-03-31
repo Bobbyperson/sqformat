@@ -225,6 +225,26 @@ mod integration_tests {
     }
 
     #[test]
+    fn format_nested_generic_space_before_close() {
+        assert_eq!(
+            format_test("table< var, table<var, var> > x"),
+            "table<var, table<var, var> > x\n"
+        );
+    }
+
+    #[test]
+    fn format_vector_always_has_spaces() {
+        assert_eq!(
+            format_test("local x = <1, 2, 3>"),
+            "local x = < 1, 2, 3 >\n"
+        );
+        assert_eq!(
+            format_test("local x = <-1, -2, -3>"),
+            "local x = < -1, -2, -3 >\n"
+        );
+    }
+
+    #[test]
     fn format_binary_assignment_wraps_after_operator() {
         // When a binary assignment is too long, it should break after the `=`
         let output = format_with(
