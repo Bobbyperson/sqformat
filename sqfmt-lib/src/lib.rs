@@ -28,7 +28,14 @@ pub fn format_source(source: &str, format: Format) -> Result<String, String> {
 
     let writer = Writer::new(Arc::new(format));
     match program(&ast)(writer) {
-        Some(w) => Ok(w.to_string()),
+        Some(w) => {
+            let s = w.to_string();
+            if s.ends_with('\n') {
+                Ok(s)
+            } else {
+                Ok(s + "\n")
+            }
+        }
         None => Err("Formatting failed: could not fit output within column limit".to_string()),
     }
 }

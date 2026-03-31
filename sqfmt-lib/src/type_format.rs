@@ -47,9 +47,7 @@ fn generic_type<'s>(t: &'s GenericType<'s>) -> impl FnOnce(Writer) -> Option<Wri
     tuple((
         type_format(&t.base),
         token(t.open),
-        format(|f| f.spaces_in_expr_brackets, space),
         separated_list_trailing_types(&t.params),
-        format(|f| f.spaces_in_expr_brackets, space),
         token(t.close),
     ))
 }

@@ -59,14 +59,17 @@ mod integration_tests {
     fn format_empty_function() {
         let input = "void function Foo() {}";
         let output = format_test(input);
-        assert_eq!(output, "void function Foo()\n{}");
+        assert_eq!(output, "void function Foo()\n{}\n");
     }
 
     #[test]
     fn format_function_with_body() {
         let input = "void function Foo() { print(\"hello\") }";
         let output = format_test(input);
-        assert_eq!(output, "void function Foo()\n{\n    print( \"hello\" )\n}");
+        assert_eq!(
+            output,
+            "void function Foo()\n{\n    print( \"hello\" )\n}\n"
+        );
     }
 
     #[test]
@@ -75,7 +78,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    if ( x )\n    {\n        a()\n    }\n    else\n    {\n        b()\n    }\n}"
+            "void function Test()\n{\n    if ( x )\n    {\n        a()\n    }\n    else\n    {\n        b()\n    }\n}\n"
         );
     }
 
@@ -83,7 +86,7 @@ mod integration_tests {
     fn format_variable_definition() {
         let input = "void function Test() { int x = 1 + 2 }";
         let output = format_test(input);
-        assert_eq!(output, "void function Test()\n{\n    int x = 1 + 2\n}");
+        assert_eq!(output, "void function Test()\n{\n    int x = 1 + 2\n}\n");
     }
 
     #[test]
@@ -92,7 +95,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    for ( int i = 0; i < 10; i++ )\n        print( i )\n}"
+            "void function Test()\n{\n    for ( int i = 0; i < 10; i++ )\n        print( i )\n}\n"
         );
     }
 
@@ -102,7 +105,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    local arr = [ 1, 2, 3 ]\n}"
+            "void function Test()\n{\n    local arr = [ 1, 2, 3 ]\n}\n"
         );
     }
 
@@ -112,7 +115,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "int function Add( int a, int b )\n{\n    return a + b\n}"
+            "int function Add( int a, int b )\n{\n    return a + b\n}\n"
         );
     }
 
@@ -120,7 +123,7 @@ mod integration_tests {
     fn format_enum() {
         let input = "enum Dir { NORTH = 0, SOUTH = 1 }";
         let output = format_test(input);
-        assert_eq!(output, "enum Dir\n{\n    NORTH = 0,\n    SOUTH = 1\n}");
+        assert_eq!(output, "enum Dir\n{\n    NORTH = 0,\n    SOUTH = 1\n}\n");
     }
 
     #[test]
@@ -129,7 +132,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    switch ( x )\n    {\n        case 0:\n            print( \"a\" )\n            break\n        case 1:\n            print( \"b\" )\n            break\n    }\n}"
+            "void function Test()\n{\n    switch ( x )\n    {\n        case 0:\n            print( \"a\" )\n            break\n        case 1:\n            print( \"b\" )\n            break\n    }\n}\n"
         );
     }
 
@@ -139,7 +142,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    try\n    {\n        Danger()\n    }\n    catch ( ex )\n    {\n        print( ex )\n    }\n}"
+            "void function Test()\n{\n    try\n    {\n        Danger()\n    }\n    catch ( ex )\n    {\n        print( ex )\n    }\n}\n"
         );
     }
 
@@ -147,14 +150,14 @@ mod integration_tests {
     fn format_global_function_declaration() {
         let input = "global function MyFunc";
         let output = format_test(input);
-        assert_eq!(output, "global function MyFunc");
+        assert_eq!(output, "global function MyFunc\n");
     }
 
     #[test]
     fn format_thread_statements() {
         let input = "void function Test() { thread DoThing() }";
         let output = format_test(input);
-        assert_eq!(output, "void function Test()\n{\n    thread DoThing()\n}");
+        assert_eq!(output, "void function Test()\n{\n    thread DoThing()\n}\n");
     }
 
     #[test]
@@ -163,7 +166,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    local x = a ? b : c\n}"
+            "void function Test()\n{\n    local x = a ? b : c\n}\n"
         );
     }
 
@@ -173,7 +176,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    Foo( Bar( Baz() ) )\n}"
+            "void function Test()\n{\n    Foo( Bar( Baz() ) )\n}\n"
         );
     }
 
@@ -183,7 +186,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    while ( alive )\n    {\n        DoThing()\n    }\n}"
+            "void function Test()\n{\n    while ( alive )\n    {\n        DoThing()\n    }\n}\n"
         );
     }
 
@@ -193,7 +196,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    do\n    {\n        DoThing()\n    }\n    while ( alive )\n}"
+            "void function Test()\n{\n    do\n    {\n        DoThing()\n    }\n    while ( alive )\n}\n"
         );
     }
 
@@ -203,7 +206,7 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    foreach ( val in arr )\n        print( val )\n}"
+            "void function Test()\n{\n    foreach ( val in arr )\n        print( val )\n}\n"
         );
     }
 
@@ -211,14 +214,14 @@ mod integration_tests {
     fn format_class() {
         let input = "class Foo { x = 1 y = 2 }";
         let output = format_test(input);
-        assert_eq!(output, "class Foo\n{\n    x = 1\n    y = 2\n}");
+        assert_eq!(output, "class Foo\n{\n    x = 1\n    y = 2\n}\n");
     }
 
     #[test]
     fn format_const() {
         let input = "const int MAX = 100";
         let output = format_test(input);
-        assert_eq!(output, "const int MAX = 100");
+        assert_eq!(output, "const int MAX = 100\n");
     }
 
     #[test]
@@ -235,7 +238,7 @@ mod integration_tests {
         );
         assert_eq!(
             output,
-            "void function T()\n{\n    fp.thirdPersonAnim =\n        EVAC_EMBARK_ANIMS_3P[ slot ]\n}"
+            "void function T()\n{\n    fp.thirdPersonAnim =\n        EVAC_EMBARK_ANIMS_3P[ slot ]\n}\n"
         );
     }
 
@@ -307,7 +310,7 @@ mod integration_tests {
         );
         assert_eq!(
             output,
-            "void function example( entity player )\n{\n\tif ( IsValid( player ) )\n\t{\n\t\tif ( IsAlive( player ) )\n\t\t{\n\t\t\tif ( player.isMechanical() )\n\t\t\t{\n\t\t\t\tplayer.SetMaxHealth( 100 )\n\t\t\t}\n\t\t}\n\t}\n}"
+            "void function example( entity player )\n{\n\tif ( IsValid( player ) )\n\t{\n\t\tif ( IsAlive( player ) )\n\t\t{\n\t\t\tif ( player.isMechanical() )\n\t\t\t{\n\t\t\t\tplayer.SetMaxHealth( 100 )\n\t\t\t}\n\t\t}\n\t}\n}\n"
         );
     }
 }
