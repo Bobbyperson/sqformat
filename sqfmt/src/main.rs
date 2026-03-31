@@ -13,6 +13,10 @@ struct Args {
     #[clap(short)]
     inplace_edit: bool,
 
+    /// Check if files are formatted without writing changes. Exits with 1 if any file would change.
+    #[clap(long)]
+    check: bool,
+
     /// Recursively format directories.
     #[clap(short, long)]
     recursive: bool,
@@ -63,7 +67,14 @@ fn main() {
 
         match format_source(&source, "<stdin>") {
             Ok(formatted) => {
-                print!("{}", formatted);
+                if args.check {
+                    if formatted != source {
+                        eprintln!("<stdin>: would reformat");
+                        std::process::exit(1);
+                    }
+                } else {
+                    print!("{}", formatted);
+                }
             }
             Err(e) => {
                 eprintln!("{}", e);
@@ -103,7 +114,12 @@ fn main() {
 
             match format_source(&source, file) {
                 Ok(formatted) => {
-                    if args.inplace_edit {
+                    if args.check {
+                        if formatted != source {
+                            eprintln!("{}: would reformat", file);
+                            had_error = true;
+                        }
+                    } else if args.inplace_edit {
                         if let Err(e) = std::fs::write(file, &formatted) {
                             eprintln!("{}: {}", file, e);
                             had_error = true;
