@@ -3,51 +3,26 @@ use crate::writer::Writer;
 use sqparse::token::Comment;
 
 const SINGLE_LINE_START: &str = "// ";
-const SCRIPT_LINE_START: &str = "# ";
 const PREPROCESSOR_START: &str = "#";
 const SINGLE_MULTI_START: &str = "/* ";
 const SINGLE_MULTI_END: &str = " */";
-
-/// Preprocessor keywords that should be prefixed with `#` (no space).
-const PREPROCESSOR_KEYWORDS: &[&str] = &[
-    "if", "else", "elseif", "endif", "ifdef", "ifndef", "define", "undef", "include", "pragma",
-    "error", "warning",
-];
-
-fn is_preprocessor(val: &str) -> bool {
-    let trimmed = val.trim_start();
-    PREPROCESSOR_KEYWORDS.iter().any(|kw| {
-        trimmed == *kw
-            || (trimmed.starts_with(kw)
-                && trimmed
-                    .as_bytes()
-                    .get(kw.len())
-                    .is_some_and(|&c| c.is_ascii_whitespace()))
-    })
-}
 
 pub fn comment<'s>(comment: &'s Comment<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| match comment {
         Comment::MultiLine(val) => multi_line_comment(val)(i),
         Comment::SingleLine(val) => single_line_comment(SINGLE_LINE_START, val)(i),
-        Comment::ScriptStyle(val) if is_preprocessor(val) => {
-            single_line_comment_no_wrap(PREPROCESSOR_START, val)(i)
-        }
-        Comment::ScriptStyle(val) => single_line_comment(SCRIPT_LINE_START, val)(i),
+        Comment::ScriptStyle(val) => preprocessor_comment(val)(i),
     }
 }
 
-/// Like `comment`, but does not wrap single-line (`//`) or script-style (`#`) comments.
+/// Like `comment`, but does not wrap single-line (`//`) comments.
 /// Used for trailing comments where wrapping would cause continuation lines to be
 /// re-attributed to the next token on re-parse, breaking idempotency.
 pub fn comment_no_wrap<'s>(comment: &'s Comment<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| match comment {
         Comment::MultiLine(val) => multi_line_comment(val)(i),
         Comment::SingleLine(val) => single_line_comment_no_wrap(SINGLE_LINE_START, val)(i),
-        Comment::ScriptStyle(val) if is_preprocessor(val) => {
-            single_line_comment_no_wrap(PREPROCESSOR_START, val)(i)
-        }
-        Comment::ScriptStyle(val) => single_line_comment_no_wrap(SCRIPT_LINE_START, val)(i),
+        Comment::ScriptStyle(val) => preprocessor_comment(val)(i),
     }
 }
 
@@ -104,6 +79,11 @@ fn single_line_comment_no_wrap<'s>(
         let trimmed = TextWrapIter::new(val).next(usize::MAX / 2).unwrap_or("");
         i.write(line_start)?.write(trimmed)?.write_new_line()
     })
+}
+
+/// Emits a preprocessor directive verbatim: `#` followed by val with no trimming.
+fn preprocessor_comment<'s>(val: &'s str) -> impl FnOnce(Writer) -> Option<Writer> + 's {
+    definitely_multi_line(move |i| i.write(PREPROCESSOR_START)?.write(val)?.write_new_line())
 }
 
 // todo: this needs to handle tabs in the text correctly
@@ -213,26 +193,7 @@ mod test {
     }
 
     #[test]
-    fn script_no_wrapping() {
-        let c = Comment::ScriptStyle("    Hello world!  ");
-        let val = test_write(comment(&c));
-
-        assert_eq!(val, "# Hello world!\n");
-    }
-
-    #[test]
-    fn script_wrapping() {
-        let c = Comment::ScriptStyle("0 1 2 3 4 5 6 78 9 This comment is over 20 columns wide");
-        let val = test_write(comment(&c));
-
-        assert_eq!(
-            val,
-            "# 0 1 2 3 4 5 6 78 9\n# This comment is\n# over 20 columns\n# wide\n"
-        );
-    }
-
-    #[test]
-    fn preprocessor_no_space() {
+    fn preprocessor_directives() {
         let c = Comment::ScriptStyle("if SERVER");
         let val = test_write(comment(&c));
         assert_eq!(val, "#if SERVER\n");
@@ -244,6 +205,10 @@ mod test {
         let c = Comment::ScriptStyle("endif");
         let val = test_write(comment(&c));
         assert_eq!(val, "#endif\n");
+
+        let c = Comment::ScriptStyle(" define FOO bar");
+        let val = test_write(comment(&c));
+        assert_eq!(val, "# define FOO bar\n");
     }
 
     #[test]

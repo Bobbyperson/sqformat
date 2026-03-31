@@ -453,7 +453,6 @@ hello"#
             comments: vec![
                 Comment::MultiLine("Short comment"),
                 Comment::SingleLine("Woah there"),
-                Comment::ScriptStyle("Scripts!"),
                 Comment::MultiLine("more multi lines"),
             ],
             before_lines: Vec::new(),
@@ -465,7 +464,6 @@ hello"#
             r#"
 /* Short comment */
 // Woah there
-# Scripts!
 /* more multi lines */
 hello"#
                 .trim_start()
@@ -599,7 +597,6 @@ hello"#
                     Comment::MultiLine("second"),
                     Comment::SingleLine("third"),
                     Comment::MultiLine("fourth"),
-                    Comment::ScriptStyle("fifth"),
                 ],
             }),
         };
@@ -611,7 +608,6 @@ hello /* first */
 /* second */
 // third
 /* fourth */
-# fifth
 "#
             .trim_start()
         );
