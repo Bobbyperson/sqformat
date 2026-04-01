@@ -110,10 +110,11 @@ pub fn token_before_lines_only<'s>(
     move |mut i| {
         for before_line in &tok.before_lines {
             if !before_line.comments.is_empty() {
-                i = i.with_allow_newlines(pair(
+                i = i.with_allow_newlines(tuple((
+                    empty_line,
                     inline_comment_list(&before_line.comments),
                     empty_line,
-                ))?;
+                )))?;
             }
         }
         Some(i)
