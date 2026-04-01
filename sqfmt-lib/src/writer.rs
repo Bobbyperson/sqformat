@@ -6,6 +6,9 @@ struct WriterStore {
     lines: im::Vector<String>,
     current_line: String,
     remaining_columns: isize,
+    /// Extra indent levels from preprocessor blocks (#if / #endif).
+    /// Lives in store (not config) so it persists across with_config restoration.
+    preproc_depth: isize,
 }
 
 #[derive(Clone, Copy)]
@@ -30,6 +33,7 @@ impl Writer {
                 lines: im::Vector::new(),
                 current_line: String::new(),
                 remaining_columns,
+                preproc_depth: 0,
             }),
             config: WriteConfig {
                 is_single_line: false,
@@ -84,12 +88,24 @@ impl Writer {
         self.with_config(config, f)
     }
 
+    /// Adjust the preprocessor indent depth (survives with_config restoration).
+    /// Positive = open a block (#if), negative = close a block (#endif).
+    pub fn adjust_preproc_depth(mut self, delta: isize) -> Self {
+        let store = Arc::make_mut(&mut self.store);
+        store.preproc_depth = (store.preproc_depth + delta).max(0);
+        self
+    }
+
     pub fn with_indent<F: FnOnce(Self) -> Option<Self>>(self, f: F) -> Option<Self> {
         let config = WriteConfig {
             indent_depth: self.config.indent_depth + 1,
             ..self.config
         };
         self.with_config(config, f)
+    }
+
+    fn effective_depth(&self) -> usize {
+        (self.config.indent_depth as isize + self.store.preproc_depth).max(0) as usize
     }
 
     pub fn empty_line(mut self) -> Option<Self> {
@@ -99,7 +115,7 @@ impl Writer {
             // Ensure the indent on the current line matches the current config depth.
             // This can get out of sync when trailing comments emit newlines at a different
             // indent depth (inside an indented block) and then we leave that block.
-            let correct_indent = self.format.indent.repeat(self.config.indent_depth);
+            let correct_indent = self.format.indent.repeat(self.effective_depth());
             let store = Arc::make_mut(&mut self.store);
             store.remaining_columns =
                 self.format.column_limit as isize - correct_indent.len() as isize;
@@ -129,7 +145,7 @@ impl Writer {
             return None;
         }
 
-        let new_line = self.format.indent.repeat(self.config.indent_depth);
+        let new_line = self.format.indent.repeat(self.effective_depth());
         let store = Arc::make_mut(&mut self.store);
         store.remaining_columns = self.format.column_limit as isize - new_line.len() as isize;
         store

@@ -3,7 +3,10 @@ use crate::combinators::{
 };
 use crate::expression::{expression, function_definition, table_expression};
 use crate::shared::identifier;
-use crate::token::{discard_token, token, token_ignoring_blank_lines, token_without_trailing};
+use crate::token::{
+    discard_token, token, token_before_lines_only, token_ignoring_blank_lines,
+    token_without_before_lines,
+};
 use crate::type_format::type_format;
 use crate::writer::Writer;
 use sqparse::ast::*;
@@ -109,21 +112,23 @@ fn block_statement<'s>(stmt: &'s BlockStatement<'s>) -> impl FnOnce(Writer) -> O
                 let i = empty_line(i)?;
                 return token_ignoring_blank_lines(stmt.close)(i);
             }
-            return tuple((
-                token_without_trailing(stmt.open),
-                token_ignoring_blank_lines(stmt.close),
-            ))(i);
+            let i = token(stmt.open)(i)?;
+            let i = empty_line(i)?;
+            return token_ignoring_blank_lines(stmt.close)(i);
         }
         let i = token(stmt.open)(i)?;
         let i = indented(|i| {
-            iter(
+            let i = iter(
                 stmt.statements
                     .iter()
                     .map(|s| pair(empty_line, statement(s))),
-            )(i)
+            )(i)?;
+            // Process close brace's before_lines inside the indented context so
+            // preprocessor directives like #endif emit at the correct depth.
+            token_before_lines_only(stmt.close)(i)
         })(i)?;
         let i = empty_line(i)?;
-        token(stmt.close)(i)
+        token_without_before_lines(stmt.close)(i)
     }
 }
 
@@ -152,7 +157,13 @@ fn if_statement<'s>(stmt: &'s IfStatement<'s>) -> impl FnOnce(Writer) -> Option<
                 let i = statement_type_body_for_else(body)(i)?;
                 let i = empty_line(i)?;
                 let i = token_ignoring_blank_lines(else_)(i)?;
-                statement_type_body(else_body)(i)
+                match else_body.as_ref() {
+                    StatementType::If(if_stmt) => {
+                        let i = space(i)?;
+                        if_statement(if_stmt)(i)
+                    }
+                    _ => statement_type_body(else_body)(i),
+                }
             }
         }
     }

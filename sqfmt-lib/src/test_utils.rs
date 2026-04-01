@@ -59,7 +59,7 @@ mod integration_tests {
     fn format_empty_function() {
         let input = "void function Foo() {}";
         let output = format_test(input);
-        assert_eq!(output, "void function Foo()\n{}\n");
+        assert_eq!(output, "void function Foo()\n{\n}\n");
     }
 
     #[test]
@@ -79,6 +79,16 @@ mod integration_tests {
         assert_eq!(
             output,
             "void function Test()\n{\n    if ( x )\n    {\n        a()\n    }\n    else\n    {\n        b()\n    }\n}\n"
+        );
+    }
+
+    #[test]
+    fn format_else_if() {
+        let input = "void function Test() { if (x) { a() } else if (y) { b() } else { c() } }";
+        let output = format_test(input);
+        assert_eq!(
+            output,
+            "void function Test()\n{\n    if ( x )\n    {\n        a()\n    }\n    else if ( y )\n    {\n        b()\n    }\n    else\n    {\n        c()\n    }\n}\n"
         );
     }
 
@@ -313,6 +323,39 @@ mod integration_tests {
         assert!(
             output.contains("[ \"g\", \"h\", \"i\" ] // third"),
             "last element should stay single-line with trailing comment: {output}"
+        );
+    }
+
+    #[test]
+    fn format_preprocessor_if_blocks() {
+        // #if / #else / #endif indent the enclosed code one extra level
+        let input = "void function Foo() {\n#if DEV\nDoDevThing()\n#else\nDoProdThing()\n#endif\n}";
+        let output = format_test(input);
+        assert_eq!(
+            output,
+            "void function Foo()\n{\n    #if DEV\n        DoDevThing()\n    #else\n        DoProdThing()\n    #endif\n}\n"
+        );
+    }
+
+    #[test]
+    fn format_preprocessor_endif_with_following_statement() {
+        // #endif followed by more statements inside a block was over-indented
+        let input = "void function Foo() {\n#if DEV\nDoDevThing()\n#endif\nDoProdThing()\n}";
+        let output = format_test(input);
+        assert_eq!(
+            output,
+            "void function Foo()\n{\n    #if DEV\n        DoDevThing()\n    #endif\n    DoProdThing()\n}\n"
+        );
+    }
+
+    #[test]
+    fn format_preprocessor_define() {
+        // #define is a non-block directive and does not change indent depth
+        let input = "void function Foo() {\n#define MAX_PLAYERS 12\ndoThing()\n}";
+        let output = format_test(input);
+        assert_eq!(
+            output,
+            "void function Foo()\n{\n    #define MAX_PLAYERS 12\n    doThing()\n}\n"
         );
     }
 

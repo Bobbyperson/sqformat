@@ -82,8 +82,32 @@ fn single_line_comment_no_wrap<'s>(
 }
 
 /// Emits a preprocessor directive verbatim: `#` followed by val with no trimming.
+/// Adjusts preproc_depth for block-forming directives:
+///   - `#if`/`#ifdef`/`#ifndef`: emit then open (+1)
+///   - `#endif`: emit then close (-1)
+///   - `#else`/`#elseif`: close (-1) then emit then open (+1)
 fn preprocessor_comment<'s>(val: &'s str) -> impl FnOnce(Writer) -> Option<Writer> + 's {
-    definitely_multi_line(move |i| i.write(PREPROCESSOR_START)?.write(val)?.write_new_line())
+    definitely_multi_line(move |i| {
+        let keyword = val.split_whitespace().next().unwrap_or("");
+        let is_open = matches!(keyword, "if" | "ifdef" | "ifndef");
+        let is_close = keyword == "endif";
+        let is_else = matches!(keyword, "else" | "elseif");
+
+        // For #else/#elseif and #endif: close the current block first, then reset the
+        // current line's indent to the new (shallower) depth before writing the directive.
+        let i = if is_else || is_close {
+            i.adjust_preproc_depth(-1).empty_line()?
+        } else {
+            i
+        };
+        let i = i.write(PREPROCESSOR_START)?.write(val)?.write_new_line()?;
+        let i = if is_open || is_else {
+            i.adjust_preproc_depth(1)
+        } else {
+            i
+        };
+        Some(i)
+    })
 }
 
 // todo: this needs to handle tabs in the text correctly

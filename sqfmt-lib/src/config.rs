@@ -15,7 +15,7 @@ pub struct Format {
 impl Default for Format {
     fn default() -> Self {
         Format {
-            column_limit: 160,
+            column_limit: 200,
             indent: "\t".to_string(),
             indent_columns: 4,
             spaces_in_expr_brackets: true,

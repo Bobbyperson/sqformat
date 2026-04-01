@@ -101,6 +101,51 @@ pub fn token_ignoring_blank_lines<'s>(
     }
 }
 
+/// Process only the before_lines comments of a token (ignoring blank separators).
+/// Used when before_lines must be emitted at a different indent depth than the token
+/// itself (e.g., #endif before a closing brace should be indented inside the block).
+pub fn token_before_lines_only<'s>(
+    tok: &'s Token<'s>,
+) -> impl FnOnce(Writer) -> Option<Writer> + 's {
+    move |mut i| {
+        for before_line in &tok.before_lines {
+            if !before_line.comments.is_empty() {
+                i = i.with_allow_newlines(pair(
+                    inline_comment_list(&before_line.comments),
+                    empty_line,
+                ))?;
+            }
+        }
+        Some(i)
+    }
+}
+
+/// Format a token's inline comments, type, and trailing comment, but NOT its before_lines.
+/// Companion to token_before_lines_only for when before_lines were already processed
+/// separately.
+pub fn token_without_before_lines<'s>(
+    tok: &'s Token<'s>,
+) -> impl FnOnce(Writer) -> Option<Writer> + 's {
+    move |i| {
+        let i = cond_or(
+            tok.comments.is_empty(),
+            token_type(tok.ty),
+            alt(
+                single_line(pair(
+                    single_line_comment_list(&tok.comments),
+                    token_type(tok.ty),
+                )),
+                tuple((
+                    multi_line_comment_list(&tok.comments),
+                    empty_line,
+                    token_type(tok.ty),
+                )),
+            ),
+        )(i)?;
+        token_trailing(tok)(i)
+    }
+}
+
 /// Emit just the trailing (new_line) comment of a token, if any.
 pub fn token_trailing<'s>(token: &'s Token<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |mut i| {
