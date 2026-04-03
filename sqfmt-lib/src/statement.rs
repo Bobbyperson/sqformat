@@ -635,13 +635,10 @@ fn global_statement<'s>(
             GlobalDefinition::Const(def) => const_definition_statement(def)(i),
             GlobalDefinition::Enum(def) => enum_definition_statement(def)(i),
             GlobalDefinition::Class(def) => class_definition_statement(def)(i),
-            GlobalDefinition::Struct(def) => tuple((
-                token(def.struct_),
-                space,
-                identifier(&def.name),
-                space,
-                struct_definition(&def.definition),
-            ))(i),
+            GlobalDefinition::Struct(def) => {
+                let i = tuple((token(def.struct_), space, identifier(&def.name)))(i)?;
+                pair(empty_line, struct_definition(&def.definition))(i)
+            }
             GlobalDefinition::Type(def) => tuple((
                 token(def.typedef),
                 space,

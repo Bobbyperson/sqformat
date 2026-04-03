@@ -137,6 +137,33 @@ mod integration_tests {
     }
 
     #[test]
+    fn format_global_enum() {
+        let input = "global enum Dir { NORTH = 0, SOUTH = 1 }";
+        let output = format_test(input);
+        assert_eq!(
+            output,
+            "global enum Dir\n{\n    NORTH = 0,\n    SOUTH = 1\n}\n"
+        );
+    }
+
+    #[test]
+    fn format_struct() {
+        let input = "struct Foo { int x, int y }";
+        let output = format_test(input);
+        assert_eq!(output, "struct Foo\n{\n    int x\n    int y\n}\n");
+    }
+
+    #[test]
+    fn format_global_struct() {
+        let input = "global struct Foo { int x, int y }";
+        let output = format_test(input);
+        assert_eq!(
+            output,
+            "global struct Foo\n{\n    int x\n    int y\n}\n"
+        );
+    }
+
+    #[test]
     fn format_switch() {
         let input = "void function Test() {\nswitch (x) {\ncase 0:\nprint(\"a\")\nbreak\ncase 1:\nprint(\"b\")\nbreak\n}\n}";
         let output = format_test(input);
