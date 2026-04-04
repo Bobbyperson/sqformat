@@ -98,7 +98,13 @@ fn main() {
             }
         }
 
-        for file in &files {
+        let total = files.len();
+        let show_progress = total > 1 && (args.inplace_edit || args.check);
+
+        for (i, file) in files.iter().enumerate() {
+            if show_progress {
+                eprintln!("[{}/{}] {}", i + 1, total, file);
+            }
             let source = match std::fs::read_to_string(file) {
                 Ok(s) => s,
                 Err(e) => {

@@ -161,12 +161,32 @@ mod integration_tests {
     }
 
     #[test]
+    fn format_inline_struct_var() {
+        let input = "struct { int x, int y } file";
+        let output = format_test(input);
+        assert_eq!(output, "struct\n{\n    int x\n    int y\n} file\n");
+    }
+
+    #[test]
     fn format_switch() {
         let input = "void function Test() {\nswitch (x) {\ncase 0:\nprint(\"a\")\nbreak\ncase 1:\nprint(\"b\")\nbreak\n}\n}";
         let output = format_test(input);
         assert_eq!(
             output,
             "void function Test()\n{\n    switch ( x )\n    {\n        case 0:\n            print( \"a\" )\n            break\n        case 1:\n            print( \"b\" )\n            break\n    }\n}\n"
+        );
+    }
+
+    #[test]
+    fn format_switch_comment_only_case() {
+        // Comments in a case body with no statements should be indented at body level,
+        // not at the case keyword level.
+        let input =
+            "void function Test() {\nswitch (x) {\ncase 0:\n// comment\ncase 1:\nbreak\n}\n}";
+        let output = format_test(input);
+        assert_eq!(
+            output,
+            "void function Test()\n{\n    switch ( x )\n    {\n        case 0:\n            // comment\n        case 1:\n            break\n    }\n}\n"
         );
     }
 
@@ -381,6 +401,32 @@ mod integration_tests {
             output,
             "void function Foo()\n{\n    #define MAX_PLAYERS 12\n    doThing()\n}\n"
         );
+    }
+
+    #[test]
+    fn format_block_with_only_comment() {
+        // A block containing only a comment should have the comment indented
+        let input = "void function Foo() {\n// comment\n}";
+        let output = format_test(input);
+        assert_eq!(output, "void function Foo()\n{\n    // comment\n}\n");
+    }
+
+    #[test]
+    fn format_nested_block_with_only_comment() {
+        // Comments in nested blocks should indent to the correct depth
+        let input = "void function Foo() {\nif (x) {\n// comment\n}\n}";
+        let output = format_test(input);
+        assert_eq!(
+            output,
+            "void function Foo()\n{\n    if ( x )\n    {\n        // comment\n    }\n}\n"
+        );
+    }
+
+    #[test]
+    fn format_block_with_only_comment_idempotent() {
+        let input = "void function Foo()\n{\n    // comment\n}\n";
+        let output = format_test(input);
+        assert_eq!(output, input);
     }
 
     #[test]

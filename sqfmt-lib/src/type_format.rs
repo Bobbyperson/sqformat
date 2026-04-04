@@ -1,4 +1,4 @@
-use crate::combinators::{format, iter, opt, pair, space, tuple};
+use crate::combinators::{empty_line, format, iter, opt, pair, space, tuple};
 use crate::shared::identifier;
 use crate::token::token;
 use crate::writer::Writer;
@@ -33,11 +33,13 @@ pub fn type_format<'s>(ty: &'s Type<'s>) -> impl FnOnce(Writer) -> Option<Writer
             }),
             token(t.close),
         ))(i),
-        Type::Struct(t) => tuple((
-            token(t.struct_),
-            space,
-            crate::statement::struct_definition(&t.definition),
-        ))(i),
+        Type::Struct(t) => {
+            let i = token(t.struct_)(i)?;
+            pair(
+                empty_line,
+                crate::statement::struct_definition(&t.definition),
+            )(i)
+        }
         Type::Reference(t) => reference_type(t)(i),
         Type::Nullable(t) => nullable_type(t)(i),
     }

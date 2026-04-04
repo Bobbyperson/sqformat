@@ -106,11 +106,10 @@ fn block_statement<'s>(stmt: &'s BlockStatement<'s>) -> impl FnOnce(Writer) -> O
                 .iter()
                 .any(|l| !l.comments.is_empty());
             if close_has_comments {
-                // Empty block with comments: use token() which preserves before_lines comments,
-                // but go through the non-empty path to get proper indented layout
                 let i = token(stmt.open)(i)?;
+                let i = indented(token_before_lines_only(stmt.close))(i)?;
                 let i = empty_line(i)?;
-                return token_ignoring_blank_lines(stmt.close)(i);
+                return token_without_before_lines(stmt.close)(i);
             }
             let i = token(stmt.open)(i)?;
             let i = empty_line(i)?;
@@ -247,25 +246,55 @@ fn switch_statement<'s>(
         ))(i)?;
         let i = empty_line(i)?;
         let i = token(stmt.open_cases)(i)?;
-        let i = indented(|i| {
-            iter(stmt.cases.iter().map(|case| {
-                move |i: Writer| {
-                    let i = empty_line(i)?;
-                    let i = match &case.condition {
+        let i = indented(|mut i| {
+            if stmt.cases.is_empty() {
+                // Empty switch body: emit close_cases before_lines at case indent level.
+                return token_before_lines_only(stmt.close_cases)(i);
+            }
+            for (idx, case) in stmt.cases.iter().enumerate() {
+                i = empty_line(i)?;
+                // For cases after the first, their before_lines were already emitted at
+                // body indent inside the previous case's indented block.
+                i = if idx == 0 {
+                    match &case.condition {
                         SwitchCaseCondition::Default { default } => token(default)(i)?,
                         SwitchCaseCondition::Case { case, value } => {
                             tuple((token(case), space, expression(value)))(i)?
                         }
-                    };
-                    let i = token(case.colon)(i)?;
-                    indented(|i| iter(case.body.iter().map(|s| pair(empty_line, statement(s))))(i))(
-                        i,
-                    )
-                }
-            }))(i)
+                    }
+                } else {
+                    match &case.condition {
+                        SwitchCaseCondition::Default { default } => {
+                            token_without_before_lines(default)(i)?
+                        }
+                        SwitchCaseCondition::Case { case, value } => {
+                            tuple((token_without_before_lines(case), space, expression(value)))(i)?
+                        }
+                    }
+                };
+                i = token(case.colon)(i)?;
+                // Comments between this case's body and the next token (next case or close_cases)
+                // belong at body indent level. Emit their before_lines here, then the next token
+                // will be formatted without its before_lines to avoid double-emitting.
+                let next_token: &'s sqparse::token::Token<'s> = stmt
+                    .cases
+                    .get(idx + 1)
+                    .map(|next_case| match &next_case.condition {
+                        SwitchCaseCondition::Default { default } => *default,
+                        SwitchCaseCondition::Case { case, .. } => *case,
+                    })
+                    .unwrap_or(stmt.close_cases);
+                i = indented(|i| {
+                    let i = iter(case.body.iter().map(|s| pair(empty_line, statement(s))))(i)?;
+                    token_before_lines_only(next_token)(i)
+                })(i)?;
+            }
+            Some(i)
         })(i)?;
         let i = empty_line(i)?;
-        token(stmt.close_cases)(i)
+        // close_cases before_lines were already emitted at body indent of last case
+        // (or at case indent for empty switch body). Emit only the token itself.
+        token_without_before_lines(stmt.close_cases)(i)
     }
 }
 
