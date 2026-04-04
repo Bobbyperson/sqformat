@@ -72,15 +72,28 @@ fn expression_without_parens<'s>(
                     ))),
                     indented(pair(empty_line, expression(&b.right))),
                 )),
-                // Last resort: break before operator
-                pair(
-                    expression(&b.left),
-                    indented(tuple((
-                        empty_line,
-                        binary_operator(&b.operator),
-                        space,
-                        expression(&b.right),
-                    ))),
+                alt(
+                    // LHS has before_line comments (after #endif): emit LHS, then try to
+                    // keep op+right on the same line as LHS.
+                    tuple((
+                        expression(&b.left),
+                        single_line(tuple((
+                            space,
+                            binary_operator(&b.operator),
+                            space,
+                            expression(&b.right),
+                        ))),
+                    )),
+                    // Last resort: break before operator
+                    pair(
+                        expression(&b.left),
+                        indented(tuple((
+                            empty_line,
+                            binary_operator(&b.operator),
+                            space,
+                            expression(&b.right),
+                        ))),
+                    ),
                 ),
             ),
         )(i),

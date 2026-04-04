@@ -157,10 +157,7 @@ mod integration_tests {
     fn format_global_struct() {
         let input = "global struct Foo { int x, int y }";
         let output = format_test(input);
-        assert_eq!(
-            output,
-            "global struct Foo\n{\n    int x\n    int y\n}\n"
-        );
+        assert_eq!(output, "global struct Foo\n{\n    int x\n    int y\n}\n");
     }
 
     #[test]
