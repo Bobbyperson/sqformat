@@ -330,9 +330,14 @@ fn property_expression<'s>(
                 token(expr.dot),
                 property_writer,
             ))),
+            // Emit the base (handling any before-line comments it carries), then try
+            // to fit `.prop` on the same line. Only indent if it genuinely doesn't fit.
             pair(
                 expression(&expr.base),
-                indented(tuple((empty_line, token(expr.dot), property_writer))),
+                alt(
+                    single_line(tuple((token(expr.dot), property_writer))),
+                    indented(tuple((empty_line, token(expr.dot), property_writer))),
+                ),
             ),
         )(i)
     }
@@ -481,14 +486,15 @@ pub fn function_definition<'s>(
             function_params(&def.params)(i)?
         };
         let i = token(def.close)(i)?;
-        let i =
-            opt(def.captures.as_ref(), |caps| {
-                tuple((
-                    space,
-                    token(caps.colon),
-                    space,
-                    token(caps.open),
-                    opt(caps.names.as_ref(), |names| {
+        let i = opt(def.captures.as_ref(), |caps| {
+            tuple((
+                space,
+                token(caps.colon),
+                space,
+                token(caps.open),
+                opt(caps.names.as_ref(), |names| {
+                    tuple((
+                        space,
                         move |i| {
                             let i =
                                 iter(names.items.iter().map(|(name, sep)| {
@@ -496,11 +502,13 @@ pub fn function_definition<'s>(
                                 }))(i)?;
                             let i = identifier(&names.last_item)(i)?;
                             opt(names.trailing, token)(i)
-                        }
-                    }),
-                    token(caps.close),
-                ))
-            })(i)?;
+                        },
+                        space,
+                    ))
+                }),
+                token(caps.close),
+            ))
+        })(i)?;
         crate::statement::statement_type_body(&def.body)(i)
     }
 }

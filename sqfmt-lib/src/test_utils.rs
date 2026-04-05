@@ -430,6 +430,39 @@ mod integration_tests {
     }
 
     #[test]
+    fn format_lambda_capture_spaces() {
+        // Capture list should have spaces inside parens: function() : ( guy )
+        let input = "void function Test() { OnThreadEnd( function() : (guy) { Foo() } ) }";
+        let output = format_test(input);
+        assert!(
+            output.contains("function() : ( guy )"),
+            "capture list should have spaces inside parens: {output}"
+        );
+    }
+
+    #[test]
+    fn format_lambda_capture_multiple() {
+        // Multiple captures should also have spaces
+        let input = "void function Test() { OnThreadEnd( function() : (a, b, c) { Foo() } ) }";
+        let output = format_test(input);
+        assert!(
+            output.contains("function() : ( a, b, c )"),
+            "multi-capture list should have spaces inside parens: {output}"
+        );
+    }
+
+    #[test]
+    fn format_lambda_empty_capture() {
+        // Empty capture list should not have spaces: function() : ()
+        let input = "void function Test() { OnThreadEnd( function() : () { Foo() } ) }";
+        let output = format_test(input);
+        assert!(
+            output.contains("function() : ()"),
+            "empty capture list should not have spaces: {output}"
+        );
+    }
+
+    #[test]
     fn format_spacing_test_file() {
         let input = std::fs::read_to_string("../sqfmt/test_files/spacing.gnut").unwrap();
         let output = format_with(

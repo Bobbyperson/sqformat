@@ -162,9 +162,8 @@ impl<'s> TextWrapIter<'s> {
 }
 
 fn trim_line_start(line: &str) -> &str {
-    line.strip_prefix('\n')
-        .unwrap_or(line)
-        .trim_start_matches(|c: char| c != '\n' && c.is_whitespace())
+    let after_newline = line.strip_prefix('\n').unwrap_or(line);
+    after_newline.strip_prefix(' ').unwrap_or(after_newline)
 }
 
 #[cfg(test)]
@@ -178,7 +177,7 @@ mod test {
         let c = Comment::SingleLine("    Hello world!  ");
         let val = test_write(comment(&c));
 
-        assert_eq!(val, "// Hello world!\n");
+        assert_eq!(val, "//    Hello world!\n");
     }
 
     #[test]
