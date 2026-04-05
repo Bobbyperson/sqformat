@@ -60,10 +60,10 @@ fn single_line_comment<'s>(
     val: &'s str,
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     definitely_multi_line(move |mut i| {
+        let available = i.remaining_columns().saturating_sub(line_start.len());
+        let target = balanced_wrap_columns(val, available);
         let mut line_iter = TextWrapIter::new(val);
-        while let Some(line_text) =
-            line_iter.next(i.remaining_columns().saturating_sub(line_start.len()))
-        {
+        while let Some(line_text) = line_iter.next(target) {
             i = i.write(line_start)?.write(line_text)?.write_new_line()?;
         }
 
@@ -108,6 +108,57 @@ fn preprocessor_comment<'s>(val: &'s str) -> impl FnOnce(Writer) -> Option<Write
         };
         Some(i)
     })
+}
+
+/// Returns a target column width ≤ `max_columns` that distributes words as evenly as possible
+/// across lines. Uses binary search to find the minimum width that still requires the same number
+/// of lines as greedy wrapping at `max_columns`.
+fn balanced_wrap_columns(text: &str, max_columns: usize) -> usize {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.is_empty() {
+        return max_columns;
+    }
+
+    let max_word_len = words.iter().map(|w| w.chars().count()).max().unwrap_or(0);
+    if max_word_len >= max_columns {
+        return max_columns;
+    }
+
+    let count_lines = |target: usize| -> usize {
+        let mut lines = 1usize;
+        let mut current = 0usize;
+        for word in &words {
+            let wlen = word.chars().count();
+            if current == 0 {
+                current = wlen;
+            } else if current + 1 + wlen <= target {
+                current += 1 + wlen;
+            } else {
+                lines += 1;
+                current = wlen;
+            }
+        }
+        lines
+    };
+
+    let num_lines = count_lines(max_columns);
+    if num_lines <= 1 {
+        return max_columns;
+    }
+
+    // Binary search for the minimum width that still fits in `num_lines` lines.
+    let mut lo = max_word_len;
+    let mut hi = max_columns;
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if count_lines(mid) <= num_lines {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+
+    lo
 }
 
 // todo: this needs to handle tabs in the text correctly
@@ -187,7 +238,7 @@ mod test {
 
         assert_eq!(
             val,
-            "// 0 1 2 3 4 5 6 7 8\n// 9 This comment is\n// over 20 columns\n// wide\n"
+            "// 0 1 2 3 4 5 6 7\n// 8 9 This\n// comment is over\n// 20 columns wide\n"
         );
     }
 
