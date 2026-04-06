@@ -371,6 +371,42 @@ mod integration_tests {
     }
 
     #[test]
+    fn binary_assignment_trailing_comment_stays_single_line() {
+        // Trailing comments on RHS should not force multi-line split
+        // Pattern A: LHS = RHS // comment
+        let output = format_test("highlight.paramVecs[ 0 ] = colour // <0.8,0.4,0.2>\n");
+        assert!(
+            output.contains("highlight.paramVecs[ 0 ] = colour // <0.8,0.4,0.2>"),
+            "assignment with trailing comment should stay on one line: {output}"
+        );
+
+        // Pattern B: LHS = literal_RHS // comment
+        let output = format_test(
+            "serverdetails.showchatprefix = true // GetConVarBool(\"discordlogshowteamchatprefix\")\n",
+        );
+        assert!(
+            output.contains("serverdetails.showchatprefix = true // GetConVarBool("),
+            "assignment with trailing comment should stay on one line: {output}"
+        );
+
+        // Pattern C: table slot <- property_access // comment
+        let output =
+            format_test("void function F() {\nparams[ \"type\" ] <- message.typeofmsg // yr\n}");
+        assert!(
+            output.contains("params[ \"type\" ] <- message.typeofmsg // yr"),
+            "table slot assignment with property access trailing comment should stay on one line: {output}"
+        );
+    }
+
+    #[test]
+    fn binary_assignment_trailing_comment_idempotent() {
+        let input = "highlight.paramVecs[ 0 ] = colour // <0.8,0.4,0.2>\n";
+        let output = format_test(input);
+        let output2 = format_test(&output);
+        assert_eq!(output, output2, "not idempotent");
+    }
+
+    #[test]
     fn format_preprocessor_if_blocks() {
         // #if / #else / #endif indent the enclosed code one extra level
         let input = "void function Foo() {\n#if DEV\nDoDevThing()\n#else\nDoProdThing()\n#endif\n}";

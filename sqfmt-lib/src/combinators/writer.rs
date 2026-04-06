@@ -49,3 +49,12 @@ where
 pub fn tag(val: &'static str) -> impl FnOnce(Writer) -> Option<Writer> {
     move |i| i.write(val)
 }
+
+/// Allow trailing comments (// comment) on the last token within this region
+/// to pass through single_line mode instead of causing failure. Use on the
+/// last expression in a single_line group (e.g., RHS of binary expressions).
+pub fn allow_trailing<F: FnOnce(Writer) -> Option<Writer>>(
+    f: F,
+) -> impl FnOnce(Writer) -> Option<Writer> {
+    move |i| i.with_allow_trailing_in_single_line(f)
+}

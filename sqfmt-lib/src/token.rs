@@ -158,6 +158,15 @@ pub fn token_trailing<'s>(token: &'s Token<'s>) -> impl FnOnce(Writer) -> Option
             // use token_without_trailing() inside single_line, then emit trailing
             // separately with with_allow_newlines(token_trailing(...)).
             if i.is_single_line() {
+                if i.allows_trailing_in_single_line() {
+                    // The caller indicated trailing comments are allowed here
+                    // (e.g., last expression in a binary op single-line branch).
+                    i = i.with_allow_newlines(pair(
+                        space,
+                        inline_comment_list_no_wrap(&line.comments),
+                    ))?;
+                    return Some(i);
+                }
                 return None;
             }
             i = i.with_allow_newlines(pair(space, inline_comment_list_no_wrap(&line.comments)))?;
@@ -213,7 +222,13 @@ fn token_before_lines<'s>(
         // If there were blank lines in the source, preserve one blank line separator.
         // Only emit if the writer already has content (avoids leading blank at start of output).
         // Suppress in single-line mode to avoid breaking single-line layout.
-        if leading_empties > 0 && i.has_content() && !suppress_blank_separators {
+        // Suppress at the start of a block (right after `{`) to avoid blank lines
+        // between the opening brace and the first statement/member.
+        if leading_empties > 0
+            && i.has_content()
+            && !i.is_at_block_start()
+            && !suppress_blank_separators
+        {
             i = new_line(i)?;
         }
 

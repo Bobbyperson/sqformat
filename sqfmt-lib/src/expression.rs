@@ -1,9 +1,12 @@
 use crate::combinators::{
-    alt, cond, empty_line, format, indented, iter, opt, pair, single_line, space, tuple,
+    allow_trailing, alt, cond, empty_line, format, indented, iter, opt, pair, single_line, space,
+    tuple,
 };
 use crate::operator::{binary_operator, postfix_operator, prefix_needs_space, prefix_operator};
 use crate::shared::{identifier, optional_separator, token_or_tag};
-use crate::token::{discard_token, token, token_trailing, token_without_trailing};
+use crate::token::{
+    discard_token, token, token_ignoring_blank_lines, token_trailing, token_without_trailing,
+};
 use crate::type_format::type_format;
 use crate::writer::Writer;
 use sqparse::ast::{
@@ -12,7 +15,6 @@ use sqparse::ast::{
     LambdaExpression, LiteralExpression, ParensExpression, PropertyExpression, RootVarExpression,
     TableExpression, TableSlot, TableSlotType, TernaryExpression, VectorExpression,
 };
-use sqparse::token::Token;
 
 pub fn expression<'s>(expr: &'s Expression<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |mut i| {
@@ -36,47 +38,6 @@ pub fn expression<'s>(expr: &'s Expression<'s>) -> impl FnOnce(Writer) -> Option
     }
 }
 
-/// Returns the last token of a "simple" expression, one whose trailing comment can
-/// be stripped by `expression_no_trailing`. Returns None for complex expression types.
-fn last_simple_token<'s>(expr: &'s Expression<'s>) -> Option<&'s Token<'s>> {
-    match expr {
-        Expression::Literal(l) => Some(l.token),
-        Expression::Var(v) => Some(v.name.token),
-        Expression::RootVar(r) => Some(r.name.token),
-        Expression::Prefix(p) => last_simple_token(&p.value),
-        _ => None,
-    }
-}
-
-/// Formats an expression without emitting the trailing comment on its last token.
-/// For simple expression types (Literal, Var, RootVar, and Prefix wrapping those),
-/// uses `token_without_trailing` for the last token. For all other types, falls back
-/// to the regular formatter, if single_line mode is active and the last token has a
-/// trailing comment, that fallback will fail (returning None), which is correct.
-fn expression_no_trailing<'s>(
-    expr: &'s Expression<'s>,
-) -> impl FnOnce(Writer) -> Option<Writer> + 's {
-    move |i| match expr {
-        Expression::Literal(l) => token_without_trailing(l.token)(i),
-        Expression::Var(v) => token_without_trailing(v.name.token)(i),
-        Expression::RootVar(r) => pair(token(r.root), token_without_trailing(r.name.token))(i),
-        Expression::Prefix(p) => {
-            if prefix_needs_space(&p.operator) {
-                pair(
-                    prefix_operator(&p.operator),
-                    pair(space, expression_no_trailing(&p.value)),
-                )(i)
-            } else {
-                pair(
-                    prefix_operator(&p.operator),
-                    expression_no_trailing(&p.value),
-                )(i)
-            }
-        }
-        _ => expression(expr)(i),
-    }
-}
-
 fn expression_without_parens<'s>(
     expr: &'s Expression<'s>,
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
@@ -96,96 +57,51 @@ fn expression_without_parens<'s>(
         Expression::Property(p) => property_expression(p)(i),
         Expression::Ternary(t) => ternary_expression(t)(i),
         Expression::Binary(b) => alt(
-            // Branch 1: single-line with trailing comment of a simple RHS emitted after.
-            // This handles cases like `a <- 216.0 // comment` where the trailing comment
-            // on the RHS literal/variable would otherwise cause a split after the operator.
+            // Branch 1: Try everything on one line. allow_trailing on the RHS lets
+            // trailing comments (// comment) pass through single_line mode so they
+            // don't force an unnecessary multi-line split.
+            single_line(tuple((
+                expression(&b.left),
+                space,
+                binary_operator(&b.operator),
+                space,
+                allow_trailing(expression(&b.right)),
+            ))),
+            // Branches 2+: Evaluate LHS once, then try right-side strategies.
+            // This avoids O(K^N) blowup on left-associative binary chains.
             move |i: Writer| {
-                let last = last_simple_token(&b.right)?;
-                if !last
-                    .new_line
-                    .as_ref()
-                    .is_some_and(|l| !l.comments.is_empty())
-                {
-                    return None;
-                }
-                let i = single_line(tuple((
-                    expression(&b.left),
+                let left_result = expression(&b.left)(i)?;
+
+                // Branch 2: op+right on same line as LHS (also handles before_line
+                // comments on LHS since LHS is emitted normally above).
+                let branch2 = single_line(tuple((
                     space,
                     binary_operator(&b.operator),
                     space,
-                    expression_no_trailing(&b.right),
-                )))(i)?;
-                i.with_allow_newlines(token_trailing(last))
-            },
-            alt(
-                // Branch 2: Try everything on one line
-                single_line(tuple((
-                    expression(&b.left),
-                    space,
+                    allow_trailing(expression(&b.right)),
+                )))(left_result.clone());
+                if let Some(result) = branch2 {
+                    return Some(result);
+                }
+
+                // Branch 3: LHS+op on current line, right side indented on next line
+                let left_op =
+                    single_line(tuple((space, binary_operator(&b.operator))))(left_result.clone());
+                if let Some(left_op) = left_op {
+                    let branch3 = indented(pair(empty_line, expression(&b.right)))(left_op);
+                    if let Some(result) = branch3 {
+                        return Some(result);
+                    }
+                }
+
+                // Branch 4 (last resort): break before operator
+                indented(tuple((
+                    empty_line,
                     binary_operator(&b.operator),
                     space,
                     expression(&b.right),
-                ))),
-                alt(
-                    // Branch 3: Left + operator on current line, right side indented on next line
-                    tuple((
-                        single_line(tuple((
-                            expression(&b.left),
-                            space,
-                            binary_operator(&b.operator),
-                        ))),
-                        indented(pair(empty_line, expression(&b.right))),
-                    )),
-                    // Branches 4, 5, 6: Evaluate LHS once, then try right-side strategies.
-                    // This avoids O(K^N) blowup on left-associative binary chains.
-                    move |i: Writer| {
-                        let left_result = expression(&b.left)(i)?;
-
-                        // Branch 4: Try op+right on same line as LHS
-                        let branch4 = single_line(tuple((
-                            space,
-                            binary_operator(&b.operator),
-                            space,
-                            expression(&b.right),
-                        )))(left_result.clone());
-                        if let Some(result) = branch4 {
-                            return Some(result);
-                        }
-
-                        // Branch 5: Same as 4, but with trailing comment of simple RHS
-                        if let Some(last) = last_simple_token(&b.right) {
-                            if last
-                                .new_line
-                                .as_ref()
-                                .is_some_and(|l| !l.comments.is_empty())
-                            {
-                                let branch5 =
-                                    single_line(tuple((
-                                        space,
-                                        binary_operator(&b.operator),
-                                        space,
-                                        expression_no_trailing(&b.right),
-                                    )))(left_result.clone());
-                                if let Some(result) = branch5 {
-                                    if let Some(result) =
-                                        result.with_allow_newlines(token_trailing(last))
-                                    {
-                                        return Some(result);
-                                    }
-                                }
-                            }
-                        }
-
-                        // Branch 6: Last resort - break before operator
-                        indented(tuple((
-                            empty_line,
-                            binary_operator(&b.operator),
-                            space,
-                            expression(&b.right),
-                        )))(left_result)
-                    },
-                ),
-            ),
+                )))(left_result)
+            },
         )(i),
         Expression::Prefix(p) => {
             if prefix_needs_space(&p.operator) {
@@ -245,7 +161,7 @@ pub fn table_expression<'s>(
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| {
         if expr.slots.is_empty() && expr.spread.is_none() {
-            return tuple((token(expr.open), token(expr.close)))(i);
+            return tuple((token(expr.open), token_ignoring_blank_lines(expr.close)))(i);
         }
         alt(
             single_line(table_expression_single_line(expr)),

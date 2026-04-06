@@ -625,7 +625,7 @@ pub fn struct_definition<'s>(
             return token(def.close)(i);
         }
         let i = indented(|i| {
-            iter(def.properties.iter().map(|prop| {
+            let i = iter(def.properties.iter().map(|prop| {
                 move |i: Writer| {
                     let i = empty_line(i)?;
                     let i = type_format(&prop.type_)(i)?;
@@ -636,10 +636,13 @@ pub fn struct_definition<'s>(
                     })(i)?;
                     opt(prop.comma, |t| discard_token(t))(i)
                 }
-            }))(i)
+            }))(i)?;
+            // Process close brace's before_lines inside the indented context so
+            // comments before the closing brace are indented correctly.
+            token_before_lines_only(def.close)(i)
         })(i)?;
         let i = empty_line(i)?;
-        token(def.close)(i)
+        token_without_before_lines(def.close)(i)
     }
 }
 

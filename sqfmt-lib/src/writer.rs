@@ -14,6 +14,11 @@ struct WriterStore {
 #[derive(Clone, Copy)]
 struct WriteConfig {
     is_single_line: bool,
+    /// When true, trailing comments (// comment) are allowed even in single_line
+    /// mode by temporarily suspending single_line. Used for the last expression
+    /// in a single_line region (e.g., RHS of a binary expression) where the
+    /// trailing comment doesn't affect whether the code fits on one line.
+    allow_trailing_in_single_line: bool,
     indent_depth: usize,
 }
 
@@ -37,6 +42,7 @@ impl Writer {
             }),
             config: WriteConfig {
                 is_single_line: false,
+                allow_trailing_in_single_line: false,
                 indent_depth: 0,
             },
         }
@@ -52,6 +58,37 @@ impl Writer {
 
     pub fn is_single_line(&self) -> bool {
         self.config.is_single_line
+    }
+
+    pub fn allows_trailing_in_single_line(&self) -> bool {
+        self.config.allow_trailing_in_single_line
+    }
+
+    /// Mark that the next trailing comment encountered in single_line mode should
+    /// be allowed (emitted via with_allow_newlines instead of causing failure).
+    /// Used for the last expression in a single_line group where the trailing
+    /// comment doesn't affect whether code fits on one line.
+    pub fn with_allow_trailing_in_single_line<F: FnOnce(Self) -> Option<Self>>(
+        self,
+        f: F,
+    ) -> Option<Self> {
+        let config = WriteConfig {
+            allow_trailing_in_single_line: true,
+            ..self.config
+        };
+        self.with_config(config, f)
+    }
+
+    /// Returns true if we're at the very start of a block body (current line is
+    /// whitespace-only and the previous completed line ends with `{`). Used to
+    /// suppress blank-line separators between an opening brace and the first statement.
+    pub fn is_at_block_start(&self) -> bool {
+        self.store.current_line.trim().is_empty()
+            && self
+                .store
+                .lines
+                .last()
+                .is_some_and(|line| line.trim_end().ends_with('{'))
     }
 
     pub fn has_content(&self) -> bool {
