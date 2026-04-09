@@ -1,5 +1,6 @@
 use crate::combinators::{
-    alt, empty_line, format, indented, iter, opt, pair, single_line, space, tuple,
+    alt, empty_line, flat_mode, format, indented, iter, new_line, opt, pair, single_line, space,
+    tuple,
 };
 use crate::expression::{expression, function_definition, table_expression};
 use crate::shared::identifier;
@@ -141,7 +142,7 @@ fn if_statement<'s>(stmt: &'s IfStatement<'s>) -> impl FnOnce(Writer) -> Option<
                 format(|f| f.spaces_in_expr_brackets, space),
             ))),
             tuple((
-                indented(pair(empty_line, expression(&stmt.condition))),
+                indented(pair(empty_line, flat_mode(expression(&stmt.condition)))),
                 empty_line,
             )),
         )(i)?;
@@ -195,7 +196,7 @@ fn while_statement<'s>(stmt: &'s WhileStatement<'s>) -> impl FnOnce(Writer) -> O
                 format(|f| f.spaces_in_expr_brackets, space),
             ))),
             tuple((
-                indented(pair(empty_line, expression(&stmt.condition))),
+                indented(pair(empty_line, flat_mode(expression(&stmt.condition)))),
                 empty_line,
             )),
         )(i)?;
@@ -253,6 +254,22 @@ fn switch_statement<'s>(
             }
             for (idx, case) in stmt.cases.iter().enumerate() {
                 i = empty_line(i)?;
+                if idx > 0 {
+                    let prev_has_body = !stmt.cases[idx - 1].body.is_empty();
+                    // Also emit a blank line if this case's keyword has comment before_lines;
+                    // those comments are emitted inside the previous case's indented block and
+                    // visually look like content of the previous case.
+                    let this_keyword_has_comments = match &case.condition {
+                        SwitchCaseCondition::Default { default } => default,
+                        SwitchCaseCondition::Case { case, .. } => case,
+                    }
+                    .before_lines
+                    .iter()
+                    .any(|l| !l.comments.is_empty());
+                    if prev_has_body || this_keyword_has_comments {
+                        i = new_line(i)?;
+                    }
+                }
                 // For cases after the first, their before_lines were already emitted at
                 // body indent inside the previous case's indented block.
                 i = if idx == 0 {

@@ -304,9 +304,7 @@ fn index_expression<'s>(
         alt(
             single_line(tuple((
                 token(expr.open),
-                format(|f| f.spaces_in_expr_brackets, space),
                 expression(&expr.index),
-                format(|f| f.spaces_in_expr_brackets, space),
                 token(expr.close),
             ))),
             tuple((
@@ -605,19 +603,22 @@ fn vector_expression<'s>(
     expr: &'s VectorExpression<'s>,
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     alt(
-        single_line(tuple((
-            token(expr.open),
-            space,
-            expression(&expr.x),
-            token(expr.comma_1),
-            space,
-            expression(&expr.y),
-            token(expr.comma_2),
-            space,
-            expression(&expr.z),
-            space,
-            token(expr.close),
-        ))),
+        move |i| {
+            let i = single_line(tuple((
+                token(expr.open),
+                space,
+                expression(&expr.x),
+                token(expr.comma_1),
+                space,
+                expression(&expr.y),
+                token(expr.comma_2),
+                space,
+                expression(&expr.z),
+                space,
+                token_without_trailing(expr.close),
+            )))(i)?;
+            i.with_allow_newlines(token_trailing(expr.close))
+        },
         tuple((
             token(expr.open),
             indented(tuple((

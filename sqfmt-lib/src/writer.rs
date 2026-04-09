@@ -20,6 +20,11 @@ struct WriteConfig {
     /// trailing comment doesn't affect whether the code fits on one line.
     allow_trailing_in_single_line: bool,
     indent_depth: usize,
+    /// When true, the next `with_indent` call will not increase the indent depth.
+    /// Used for if-condition multi-line formatting so that binary expression
+    /// continuation lines stay at the same indent level as the first condition line,
+    /// rather than being double-indented. Consumed (set to false) on first use.
+    flat_indent: bool,
 }
 
 #[derive(Clone)]
@@ -44,6 +49,7 @@ impl Writer {
                 is_single_line: false,
                 allow_trailing_in_single_line: false,
                 indent_depth: 0,
+                flat_indent: false,
             },
         }
     }
@@ -134,8 +140,27 @@ impl Writer {
     }
 
     pub fn with_indent<F: FnOnce(Self) -> Option<Self>>(self, f: F) -> Option<Self> {
+        if self.config.flat_indent {
+            // Suppress this indent level and turn off flat_indent for nested calls,
+            // so further indentation (function call args) works normally.
+            let config = WriteConfig {
+                flat_indent: false,
+                ..self.config
+            };
+            return self.with_config(config, f);
+        }
         let config = WriteConfig {
             indent_depth: self.config.indent_depth + 1,
+            ..self.config
+        };
+        self.with_config(config, f)
+    }
+
+    /// Run `f` with flat-indent mode enabled: the next `with_indent` call inside
+    /// will not increase the indent depth (consumed after first use).
+    pub fn with_flat_indent<F: FnOnce(Self) -> Option<Self>>(self, f: F) -> Option<Self> {
+        let config = WriteConfig {
+            flat_indent: true,
             ..self.config
         };
         self.with_config(config, f)

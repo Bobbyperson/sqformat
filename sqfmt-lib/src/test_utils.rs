@@ -54,12 +54,20 @@ pub fn format_test(source: &str) -> String {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
+    use indoc::indoc;
 
     #[test]
     fn format_empty_function() {
         let input = "void function Foo() {}";
         let output = format_test(input);
-        assert_eq!(output, "void function Foo()\n{\n}\n");
+        assert_eq!(
+            output,
+            indoc! {"
+                void function Foo()
+                {
+                }
+            "}
+        );
     }
 
     #[test]
@@ -68,7 +76,12 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Foo()\n{\n    print( \"hello\" )\n}\n"
+            indoc! {r#"
+                void function Foo()
+                {
+                    print( "hello" )
+                }
+            "#}
         );
     }
 
@@ -78,7 +91,19 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    if ( x )\n    {\n        a()\n    }\n    else\n    {\n        b()\n    }\n}\n"
+            indoc! {"
+                void function Test()
+                {
+                    if ( x )
+                    {
+                        a()
+                    }
+                    else
+                    {
+                        b()
+                    }
+                }
+            "}
         );
     }
 
@@ -88,7 +113,23 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    if ( x )\n    {\n        a()\n    }\n    else if ( y )\n    {\n        b()\n    }\n    else\n    {\n        c()\n    }\n}\n"
+            indoc! {"
+                void function Test()
+                {
+                    if ( x )
+                    {
+                        a()
+                    }
+                    else if ( y )
+                    {
+                        b()
+                    }
+                    else
+                    {
+                        c()
+                    }
+                }
+            "}
         );
     }
 
@@ -96,7 +137,15 @@ mod integration_tests {
     fn format_variable_definition() {
         let input = "void function Test() { int x = 1 + 2 }";
         let output = format_test(input);
-        assert_eq!(output, "void function Test()\n{\n    int x = 1 + 2\n}\n");
+        assert_eq!(
+            output,
+            indoc! {"
+                void function Test()
+                {
+                    int x = 1 + 2
+                }
+            "}
+        );
     }
 
     #[test]
@@ -105,7 +154,13 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    for ( int i = 0; i < 10; i++ )\n        print( i )\n}\n"
+            indoc! {"
+                void function Test()
+                {
+                    for ( int i = 0; i < 10; i++ )
+                        print( i )
+                }
+            "}
         );
     }
 
@@ -115,7 +170,12 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    local arr = [ 1, 2, 3 ]\n}\n"
+            indoc! {"
+                void function Test()
+                {
+                    local arr = [ 1, 2, 3 ]
+                }
+            "}
         );
     }
 
@@ -125,7 +185,12 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "int function Add( int a, int b )\n{\n    return a + b\n}\n"
+            indoc! {"
+                int function Add( int a, int b )
+                {
+                    return a + b
+                }
+            "}
         );
     }
 
@@ -133,7 +198,16 @@ mod integration_tests {
     fn format_enum() {
         let input = "enum Dir { NORTH = 0, SOUTH = 1 }";
         let output = format_test(input);
-        assert_eq!(output, "enum Dir\n{\n    NORTH = 0,\n    SOUTH = 1\n}\n");
+        assert_eq!(
+            output,
+            indoc! {"
+                enum Dir
+                {
+                    NORTH = 0,
+                    SOUTH = 1
+                }
+            "}
+        );
     }
 
     #[test]
@@ -142,7 +216,13 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "global enum Dir\n{\n    NORTH = 0,\n    SOUTH = 1\n}\n"
+            indoc! {"
+                global enum Dir
+                {
+                    NORTH = 0,
+                    SOUTH = 1
+                }
+            "}
         );
     }
 
@@ -150,30 +230,81 @@ mod integration_tests {
     fn format_struct() {
         let input = "struct Foo { int x, int y }";
         let output = format_test(input);
-        assert_eq!(output, "struct Foo\n{\n    int x\n    int y\n}\n");
+        assert_eq!(
+            output,
+            indoc! {"
+                struct Foo
+                {
+                    int x
+                    int y
+                }
+            "}
+        );
     }
 
     #[test]
     fn format_global_struct() {
         let input = "global struct Foo { int x, int y }";
         let output = format_test(input);
-        assert_eq!(output, "global struct Foo\n{\n    int x\n    int y\n}\n");
+        assert_eq!(
+            output,
+            indoc! {"
+                global struct Foo
+                {
+                    int x
+                    int y
+                }
+            "}
+        );
     }
 
     #[test]
     fn format_inline_struct_var() {
         let input = "struct { int x, int y } file";
         let output = format_test(input);
-        assert_eq!(output, "struct\n{\n    int x\n    int y\n} file\n");
+        assert_eq!(
+            output,
+            indoc! {"
+                struct
+                {
+                    int x
+                    int y
+                } file
+            "}
+        );
     }
 
     #[test]
     fn format_switch() {
-        let input = "void function Test() {\nswitch (x) {\ncase 0:\nprint(\"a\")\nbreak\ncase 1:\nprint(\"b\")\nbreak\n}\n}";
+        let input = indoc! {"
+            void function Test() {
+            switch (x) {
+            case 0:
+            print(\"a\")
+            break
+            case 1:
+            print(\"b\")
+            break
+            }
+            }"};
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    switch ( x )\n    {\n        case 0:\n            print( \"a\" )\n            break\n        case 1:\n            print( \"b\" )\n            break\n    }\n}\n"
+            indoc! {r#"
+                void function Test()
+                {
+                    switch ( x )
+                    {
+                        case 0:
+                            print( "a" )
+                            break
+
+                        case 1:
+                            print( "b" )
+                            break
+                    }
+                }
+            "#}
         );
     }
 
@@ -181,12 +312,76 @@ mod integration_tests {
     fn format_switch_comment_only_case() {
         // Comments in a case body with no statements should be indented at body level,
         // not at the case keyword level.
-        let input =
-            "void function Test() {\nswitch (x) {\ncase 0:\n// comment\ncase 1:\nbreak\n}\n}";
+        let input = indoc! {"
+            void function Test() {
+            switch (x) {
+            case 0:
+            // comment
+            case 1:
+            break
+            }
+            }"};
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    switch ( x )\n    {\n        case 0:\n            // comment\n        case 1:\n            break\n    }\n}\n"
+            indoc! {"
+                void function Test()
+                {
+                    switch ( x )
+                    {
+                        case 0:
+                            // comment
+
+                        case 1:
+                            break
+                    }
+                }
+            "}
+        );
+    }
+
+    #[test]
+    fn format_switch_fallthrough_cases() {
+        // Consecutive cases with empty bodies (fallthrough) should not be separated
+        // by blank lines. Cases with bodies should still have blank lines between them.
+        let input = indoc! {r#"
+            void function Test() {
+            switch (x) {
+            case "a":
+            case "b":
+            case "c":
+            print("abc")
+            break
+            case "d":
+            print("d")
+            break
+            default:
+            break
+            }
+            }"#};
+        let output = format_test(input);
+        assert_eq!(
+            output,
+            indoc! {r#"
+                void function Test()
+                {
+                    switch ( x )
+                    {
+                        case "a":
+                        case "b":
+                        case "c":
+                            print( "abc" )
+                            break
+
+                        case "d":
+                            print( "d" )
+                            break
+
+                        default:
+                            break
+                    }
+                }
+            "#}
         );
     }
 
@@ -196,7 +391,19 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    try\n    {\n        Danger()\n    }\n    catch ( ex )\n    {\n        print( ex )\n    }\n}\n"
+            indoc! {"
+                void function Test()
+                {
+                    try
+                    {
+                        Danger()
+                    }
+                    catch ( ex )
+                    {
+                        print( ex )
+                    }
+                }
+            "}
         );
     }
 
@@ -211,7 +418,15 @@ mod integration_tests {
     fn format_thread_statements() {
         let input = "void function Test() { thread DoThing() }";
         let output = format_test(input);
-        assert_eq!(output, "void function Test()\n{\n    thread DoThing()\n}\n");
+        assert_eq!(
+            output,
+            indoc! {"
+                void function Test()
+                {
+                    thread DoThing()
+                }
+            "}
+        );
     }
 
     #[test]
@@ -220,7 +435,12 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    local x = a ? b : c\n}\n"
+            indoc! {"
+                void function Test()
+                {
+                    local x = a ? b : c
+                }
+            "}
         );
     }
 
@@ -230,7 +450,12 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    Foo( Bar( Baz() ) )\n}\n"
+            indoc! {"
+                void function Test()
+                {
+                    Foo( Bar( Baz() ) )
+                }
+            "}
         );
     }
 
@@ -240,7 +465,15 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    while ( alive )\n    {\n        DoThing()\n    }\n}\n"
+            indoc! {"
+                void function Test()
+                {
+                    while ( alive )
+                    {
+                        DoThing()
+                    }
+                }
+            "}
         );
     }
 
@@ -250,7 +483,16 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    do\n    {\n        DoThing()\n    }\n    while ( alive )\n}\n"
+            indoc! {"
+                void function Test()
+                {
+                    do
+                    {
+                        DoThing()
+                    }
+                    while ( alive )
+                }
+            "}
         );
     }
 
@@ -260,7 +502,13 @@ mod integration_tests {
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Test()\n{\n    foreach ( val in arr )\n        print( val )\n}\n"
+            indoc! {"
+                void function Test()
+                {
+                    foreach ( val in arr )
+                        print( val )
+                }
+            "}
         );
     }
 
@@ -268,7 +516,16 @@ mod integration_tests {
     fn format_class() {
         let input = "class Foo { x = 1 y = 2 }";
         let output = format_test(input);
-        assert_eq!(output, "class Foo\n{\n    x = 1\n    y = 2\n}\n");
+        assert_eq!(
+            output,
+            indoc! {"
+                class Foo
+                {
+                    x = 1
+                    y = 2
+                }
+            "}
+        );
     }
 
     #[test]
@@ -299,6 +556,14 @@ mod integration_tests {
     }
 
     #[test]
+    fn format_vector_trailing_comment_stays_single_line() {
+        assert_eq!(
+            format_test("local x = <\n    1,\n    2,\n    3\n> // trailing comment"),
+            "local x = < 1, 2, 3 > // trailing comment\n"
+        );
+    }
+
+    #[test]
     fn format_binary_assignment_wraps_after_operator() {
         // When a binary assignment is too long, it should break after the `=`
         let output = format_with(
@@ -312,7 +577,13 @@ mod integration_tests {
         );
         assert_eq!(
             output,
-            "void function T()\n{\n    fp.thirdPersonAnim =\n        EVAC_EMBARK_ANIMS_3P[ slot ]\n}\n"
+            indoc! {"
+                void function T()
+                {
+                    fp.thirdPersonAnim =
+                        EVAC_EMBARK_ANIMS_3P[slot]
+                }
+            "}
         );
     }
 
@@ -321,52 +592,107 @@ mod integration_tests {
     #[test]
     fn array_commented_out_element_idempotent() {
         // Bug 1: commented-out array element pulled rest of array onto comment line
-        let input = "struct {\n    array<string> names = [\n        // \"Arc Pylon\",\n        \"Arc Ball\"\n    ]\n} file";
+        let input = indoc! {r#"
+            struct {
+                array<string> names = [
+                    // "Arc Pylon",
+                    "Arc Ball"
+                ]
+            } file"#};
         let output = format_test(input);
         let output2 = format_test(&output);
         assert_eq!(output, output2, "not idempotent");
-        assert!(
-            output.contains("[\n        // \"Arc Pylon\",\n        \"Arc Ball\"\n    ]"),
-            "comment should stay on its own line inside array: {output}"
+        assert_eq!(
+            output,
+            indoc! {r#"
+                struct
+                {
+                    array<string> names = [
+                        // "Arc Pylon",
+                        "Arc Ball"
+                    ]
+                } file
+            "#}
         );
     }
 
     #[test]
     fn array_trailing_comment_on_last_element_idempotent() {
         // Bug 2: last array element with trailing comment gets broken on 2nd pass
-        let input = "struct {\n    float[2][3] offsets = [\n        [0.2, 0.0],\n        [0.2, 2.0], // right\n        [0.2, -2.0], // left\n    ]\n} file";
+        let input = indoc! {"
+            struct {
+                float[2][3] offsets = [
+                    [0.2, 0.0],
+                    [0.2, 2.0], // right
+                    [0.2, -2.0], // left
+                ]
+            } file"};
         let output = format_test(input);
         let output2 = format_test(&output);
         assert_eq!(output, output2, "not idempotent");
-        assert!(
-            output.contains("[ 0.2, -2.0 ] // left"),
-            "last element should stay single-line with trailing comment: {output}"
+        assert_eq!(
+            output,
+            indoc! {"
+                struct
+                {
+                    float[ 2 ][ 3 ] offsets = [
+                        [ 0.2, 0.0 ],
+                        [ 0.2, 2.0 ], // right
+                        [ 0.2, -2.0 ] // left
+                    ]
+                } file
+            "}
         );
     }
 
     #[test]
     fn array_leading_comments_idempotent() {
         // Bug 3: multi-line array with leading comments gets collapsed then re-expanded
-        let input = "const array<string> EVENTS = \n[\n    // these are disabled\n    // needs to re-enable them\n    \"DoomTitan\",\n    \"DoomAutoTitan\"\n]";
+        let input = indoc! {r#"
+            const array<string> EVENTS =
+            [
+                // these are disabled
+                // needs to re-enable them
+                "DoomTitan",
+                "DoomAutoTitan"
+            ]"#};
         let output = format_test(input);
         let output2 = format_test(&output);
         assert_eq!(output, output2, "not idempotent");
-        assert!(
-            output.contains("[\n    // these are disabled"),
-            "comments should stay inside array on their own lines: {output}"
+        assert_eq!(
+            output,
+            indoc! {r#"
+                const array<string> EVENTS = [
+                    // these are disabled
+                    // needs to re-enable them
+                    "DoomTitan",
+                    "DoomAutoTitan"
+                ]
+            "#}
         );
     }
 
     #[test]
     fn array_last_element_no_comma_trailing_comment_idempotent() {
         // Bug 4: last element without trailing comma loses its trailing comment stability
-        let input = "const array< array< string > > ANIMS = [\n    [ \"a\", \"b\", \"c\" ], // first\n    [ \"d\", \"e\", \"f\" ], // second\n    [ \"g\", \"h\", \"i\" ] // third\n]";
+        let input = indoc! {r#"
+            const array< array< string > > ANIMS = [
+                [ "a", "b", "c" ], // first
+                [ "d", "e", "f" ], // second
+                [ "g", "h", "i" ] // third
+            ]"#};
         let output = format_test(input);
         let output2 = format_test(&output);
         assert_eq!(output, output2, "not idempotent");
-        assert!(
-            output.contains("[ \"g\", \"h\", \"i\" ] // third"),
-            "last element should stay single-line with trailing comment: {output}"
+        assert_eq!(
+            output,
+            indoc! {r#"
+                const array<array<string> > ANIMS = [
+                    [ "a", "b", "c" ], // first
+                    [ "d", "e", "f" ], // second
+                    [ "g", "h", "i" ] // third
+                ]
+            "#}
         );
     }
 
@@ -374,33 +700,37 @@ mod integration_tests {
     fn binary_assignment_trailing_comment_stays_single_line() {
         // Trailing comments on RHS should not force multi-line split
         // Pattern A: LHS = RHS // comment
-        let output = format_test("highlight.paramVecs[ 0 ] = colour // <0.8,0.4,0.2>\n");
-        assert!(
-            output.contains("highlight.paramVecs[ 0 ] = colour // <0.8,0.4,0.2>"),
-            "assignment with trailing comment should stay on one line: {output}"
+        assert_eq!(
+            format_test("highlight.paramVecs[ 0 ] = colour // <0.8,0.4,0.2>\n"),
+            "highlight.paramVecs[0] = colour // <0.8,0.4,0.2>\n"
         );
 
         // Pattern B: LHS = literal_RHS // comment
-        let output = format_test(
-            "serverdetails.showchatprefix = true // GetConVarBool(\"discordlogshowteamchatprefix\")\n",
-        );
-        assert!(
-            output.contains("serverdetails.showchatprefix = true // GetConVarBool("),
-            "assignment with trailing comment should stay on one line: {output}"
+        assert_eq!(
+            format_test(
+                "serverdetails.showchatprefix = true // GetConVarBool(\"discordlogshowteamchatprefix\")\n"
+            ),
+            "serverdetails.showchatprefix = true // GetConVarBool(\"discordlogshowteamchatprefix\")\n"
         );
 
         // Pattern C: table slot <- property_access // comment
-        let output =
-            format_test("void function F() {\nparams[ \"type\" ] <- message.typeofmsg // yr\n}");
-        assert!(
-            output.contains("params[ \"type\" ] <- message.typeofmsg // yr"),
-            "table slot assignment with property access trailing comment should stay on one line: {output}"
+        assert_eq!(
+            format_test(indoc! {r#"
+                void function F() {
+                params[ "type" ] <- message.typeofmsg // yr
+                }"#}),
+            indoc! {r#"
+                void function F()
+                {
+                    params["type"] <- message.typeofmsg // yr
+                }
+            "#}
         );
     }
 
     #[test]
     fn binary_assignment_trailing_comment_idempotent() {
-        let input = "highlight.paramVecs[ 0 ] = colour // <0.8,0.4,0.2>\n";
+        let input = "highlight.paramVecs[0] = colour // <0.8,0.4,0.2>\n";
         let output = format_test(input);
         let output2 = format_test(&output);
         assert_eq!(output, output2, "not idempotent");
@@ -409,81 +739,166 @@ mod integration_tests {
     #[test]
     fn format_preprocessor_if_blocks() {
         // #if / #else / #endif indent the enclosed code one extra level
-        let input = "void function Foo() {\n#if DEV\nDoDevThing()\n#else\nDoProdThing()\n#endif\n}";
+        let input = indoc! {"
+            void function Foo() {
+            #if DEV
+            DoDevThing()
+            #else
+            DoProdThing()
+            #endif
+            }"};
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Foo()\n{\n    #if DEV\n        DoDevThing()\n    #else\n        DoProdThing()\n    #endif\n}\n"
+            indoc! {"
+                void function Foo()
+                {
+                    #if DEV
+                        DoDevThing()
+                    #else
+                        DoProdThing()
+                    #endif
+                }
+            "}
         );
     }
 
     #[test]
     fn format_preprocessor_endif_with_following_statement() {
         // #endif followed by more statements inside a block was over-indented
-        let input = "void function Foo() {\n#if DEV\nDoDevThing()\n#endif\nDoProdThing()\n}";
+        let input = indoc! {"
+            void function Foo() {
+            #if DEV
+            DoDevThing()
+            #endif
+            DoProdThing()
+            }"};
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Foo()\n{\n    #if DEV\n        DoDevThing()\n    #endif\n    DoProdThing()\n}\n"
+            indoc! {"
+                void function Foo()
+                {
+                    #if DEV
+                        DoDevThing()
+                    #endif
+                    DoProdThing()
+                }
+            "}
         );
     }
 
     #[test]
     fn format_preprocessor_define() {
         // #define is a non-block directive and does not change indent depth
-        let input = "void function Foo() {\n#define MAX_PLAYERS 12\ndoThing()\n}";
+        let input = indoc! {"
+            void function Foo() {
+            #define MAX_PLAYERS 12
+            doThing()
+            }"};
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Foo()\n{\n    #define MAX_PLAYERS 12\n    doThing()\n}\n"
+            indoc! {"
+                void function Foo()
+                {
+                    #define MAX_PLAYERS 12
+                    doThing()
+                }
+            "}
         );
     }
 
     #[test]
     fn format_block_with_only_comment() {
         // A block containing only a comment should have the comment indented
-        let input = "void function Foo() {\n// comment\n}";
+        let input = indoc! {"
+            void function Foo() {
+            // comment
+            }"};
         let output = format_test(input);
-        assert_eq!(output, "void function Foo()\n{\n    // comment\n}\n");
+        assert_eq!(
+            output,
+            indoc! {"
+                void function Foo()
+                {
+                    // comment
+                }
+            "}
+        );
     }
 
     #[test]
     fn format_nested_block_with_only_comment() {
         // Comments in nested blocks should indent to the correct depth
-        let input = "void function Foo() {\nif (x) {\n// comment\n}\n}";
+        let input = indoc! {"
+            void function Foo() {
+            if (x) {
+            // comment
+            }
+            }"};
         let output = format_test(input);
         assert_eq!(
             output,
-            "void function Foo()\n{\n    if ( x )\n    {\n        // comment\n    }\n}\n"
+            indoc! {"
+                void function Foo()
+                {
+                    if ( x )
+                    {
+                        // comment
+                    }
+                }
+            "}
         );
     }
 
     #[test]
     fn format_block_with_only_comment_idempotent() {
-        let input = "void function Foo()\n{\n    // comment\n}\n";
+        let input = indoc! {"
+            void function Foo()
+            {
+                // comment
+            }
+        "};
         let output = format_test(input);
         assert_eq!(output, input);
     }
 
     #[test]
     fn format_lambda_capture_spaces() {
-        // Capture list should have spaces inside parens: function() : ( guy )
         let input = "void function Test() { OnThreadEnd( function() : (guy) { Foo() } ) }";
-        let output = format_test(input);
-        assert!(
-            output.contains("function() : ( guy )"),
-            "capture list should have spaces inside parens: {output}"
+        assert_eq!(
+            format_test(input),
+            indoc! {"
+                void function Test()
+                {
+                    OnThreadEnd(
+                        function() : ( guy )
+                        {
+                            Foo()
+                        }
+                    )
+                }
+            "}
         );
     }
 
     #[test]
     fn format_lambda_capture_multiple() {
-        // Multiple captures should also have spaces
         let input = "void function Test() { OnThreadEnd( function() : (a, b, c) { Foo() } ) }";
-        let output = format_test(input);
-        assert!(
-            output.contains("function() : ( a, b, c )"),
-            "multi-capture list should have spaces inside parens: {output}"
+        assert_eq!(
+            format_test(input),
+            indoc! {"
+                void function Test()
+                {
+                    OnThreadEnd(
+                        function() : ( a, b, c )
+                        {
+                            Foo()
+                        }
+                    )
+                }
+            "}
         );
     }
 
@@ -491,10 +906,19 @@ mod integration_tests {
     fn format_lambda_empty_capture() {
         // Empty capture list should not have spaces: function() : ()
         let input = "void function Test() { OnThreadEnd( function() : () { Foo() } ) }";
-        let output = format_test(input);
-        assert!(
-            output.contains("function() : ()"),
-            "empty capture list should not have spaces: {output}"
+        assert_eq!(
+            format_test(input),
+            indoc! {"
+                void function Test()
+                {
+                    OnThreadEnd(
+                        function() : ()
+                        {
+                            Foo()
+                        }
+                    )
+                }
+            "}
         );
     }
 
@@ -512,7 +936,21 @@ mod integration_tests {
         );
         assert_eq!(
             output,
-            "void function example( entity player )\n{\n\tif ( IsValid( player ) )\n\t{\n\t\tif ( IsAlive( player ) )\n\t\t{\n\t\t\tif ( player.isMechanical() )\n\t\t\t{\n\t\t\t\tplayer.SetMaxHealth( 100 )\n\t\t\t}\n\t\t}\n\t}\n}\n"
+            indoc! {"
+                void function example( entity player )
+                {
+                \tif ( IsValid( player ) )
+                \t{
+                \t\tif ( IsAlive( player ) )
+                \t\t{
+                \t\t\tif ( player.isMechanical() )
+                \t\t\t{
+                \t\t\t\tplayer.SetMaxHealth( 100 )
+                \t\t\t}
+                \t\t}
+                \t}
+                }
+            "}
         );
     }
 }

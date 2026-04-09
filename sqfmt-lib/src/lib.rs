@@ -20,6 +20,15 @@ use std::sync::Arc;
 
 /// Format a Squirrel source string using the given format configuration.
 pub fn format_source(source: &str, format: Format) -> Result<String, String> {
+    // Ensure source ends with a newline so the lexer attaches trailing `// comments`
+    // to the preceding token's new_line rather than emitting a synthetic Empty token.
+    let owned;
+    let source: &str = if source.ends_with('\n') {
+        source
+    } else {
+        owned = format!("{source}\n");
+        &owned
+    };
     let tokens = sqparse::tokenize(source, sqparse::Flavor::SquirrelRespawn)
         .map_err(|e| e.display(source, Some("Lexer error")).to_string())?;
 

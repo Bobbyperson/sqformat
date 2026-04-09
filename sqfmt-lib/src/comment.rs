@@ -221,6 +221,7 @@ fn trim_line_start(line: &str) -> &str {
 mod test {
     use crate::comment::comment;
     use crate::test_utils::{test_write, test_write_columns};
+    use indoc::indoc;
     use sqparse::token::Comment;
 
     #[test]
@@ -238,7 +239,12 @@ mod test {
 
         assert_eq!(
             val,
-            "// 0 1 2 3 4 5 6 7\n// 8 9 This\n// comment is over\n// 20 columns wide\n"
+            indoc! {"
+                // 0 1 2 3 4 5 6 7
+                // 8 9 This
+                // comment is over
+                // 20 columns wide
+            "}
         );
     }
 
@@ -251,7 +257,12 @@ mod test {
 
         assert_eq!(
             val,
-            "// Thiswordisover10chars\n// Thiswordisalsoover10chars\n// ok?\n// Andsoisthisone\n"
+            indoc! {"
+                // Thiswordisover10chars
+                // Thiswordisalsoover10chars
+                // ok?
+                // Andsoisthisone
+            "}
         );
     }
 
@@ -262,7 +273,14 @@ mod test {
 
         assert_eq!(
             val,
-            "// Hello\n// world,\n// this\n// is\n// some\n// text\n"
+            indoc! {"
+                // Hello
+                // world,
+                // this
+                // is
+                // some
+                // text
+            "}
         );
     }
 
@@ -314,6 +332,13 @@ mod test {
         let c = Comment::MultiLine("*\n * Hello\n * world! ");
         let val = test_write(comment(&c));
 
-        assert_eq!(val, "/**\n * Hello\n * world!*/\n");
+        assert_eq!(
+            val,
+            indoc! {"
+                /**
+                 * Hello
+                 * world!*/
+            "}
+        );
     }
 }

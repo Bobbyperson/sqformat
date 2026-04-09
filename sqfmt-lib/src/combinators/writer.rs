@@ -24,6 +24,15 @@ pub fn indented<F: FnOnce(Writer) -> Option<Writer>>(
     move |i| i.with_indent(f)
 }
 
+/// Enable flat-indent mode for `f`: the next `with_indent` call inside will not
+/// increase the indent depth. Used for if-condition expressions so that binary
+/// operator continuation lines stay at the same indent as the first condition line.
+pub fn flat_mode<F: FnOnce(Writer) -> Option<Writer>>(
+    f: F,
+) -> impl FnOnce(Writer) -> Option<Writer> {
+    move |i| i.with_flat_indent(f)
+}
+
 pub fn empty_line(i: Writer) -> Option<Writer> {
     i.empty_line()
 }
