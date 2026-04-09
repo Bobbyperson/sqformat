@@ -6,7 +6,7 @@ This document describes every formatting rule sqformat applies. All examples sho
 
 ## Line Length
 
-The default column limit is **200 characters**. When a construct exceeds this limit, sqformat falls back to a multi-line layout. When it fits, it stays on one line.
+The default column limit is **160 characters**. When a construct exceeds this limit, sqformat falls back to a multi-line layout. When it fits, it stays on one line.
 
 ---
 

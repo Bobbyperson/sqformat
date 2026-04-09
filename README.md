@@ -74,7 +74,7 @@ The formatting engine is available as a library crate (`sqfmt-lib`):
 use sqfmt_lib::{format_source_default, format_source};
 use sqfmt_lib::config::Format;
 
-// Format with defaults (120 column limit, tab indent)
+// Format with defaults (160 column limit, tab indent)
 let output = format_source_default(source)?;
 
 // Format with custom settings

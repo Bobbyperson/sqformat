@@ -65,8 +65,6 @@ Tests live alongside the code in `#[cfg(test)] mod test` blocks. When adding or 
    diff /tmp/pass1.nut /tmp/pass2.nut
    ```
 
-Test files in `sqfmt/test_files/` can be used for manual testing. The `_gamemode_inf.nut` file is a large real-world script that exercises most language features.
-
 ## Reporting Bugs
 
 If sqformat produces incorrect output, please include:
