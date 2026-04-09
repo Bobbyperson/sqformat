@@ -42,7 +42,7 @@ jobs:
         run: |
           failed=0
           count=0
-          for f in $(find NorthstarMods -name '*.nut' -o -name '*.gnut') sqfmt/test_files/*.nut sqfmt/test_files/*.gnut; do
+          for f in $(find NorthstarMods -name '*.nut' -o -name '*.gnut'); do
             [ -f "$f" ] || continue
             pass1=$(./target/release/sqformat "$f" 2>/dev/null) || continue
             pass2=$(echo "$pass1" | ./target/release/sqformat 2>/dev/null) || continue

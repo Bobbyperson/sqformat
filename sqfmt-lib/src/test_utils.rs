@@ -923,10 +923,19 @@ mod integration_tests {
     }
 
     #[test]
-    fn format_spacing_test_file() {
-        let input = std::fs::read_to_string("../sqfmt/test_files/spacing.gnut").unwrap();
+    fn format_nested_if_compact_input() {
+        let input = indoc! {"
+            void function example(entity player) {
+            if (IsValid(player)) {
+            if (IsAlive(player)) {
+            if (player.isMechanical()) {
+            player.SetMaxHealth(100)
+            }
+            }
+            }
+            }"};
         let output = format_with(
-            &input,
+            input,
             Format {
                 column_limit: 120,
                 indent: "\t".to_string(),
@@ -949,6 +958,75 @@ mod integration_tests {
                 \t\t\t}
                 \t\t}
                 \t}
+                }
+            "}
+        );
+    }
+
+    #[test]
+    fn format_nested_if_spaced_input() {
+        let input = indoc! {"
+            void function example(entity player) {
+                if (IsValid(player)) {
+                    if (IsAlive(player)) {
+                        if (player.isMechanical()) {
+                            player.SetMaxHealth(100)
+                        }
+                    }
+                }
+            }"};
+        let output = format_with(
+            input,
+            Format {
+                column_limit: 120,
+                indent: "\t".to_string(),
+                indent_columns: 4,
+                ..Format::default()
+            },
+        );
+        assert_eq!(
+            output,
+            indoc! {"
+                void function example( entity player )
+                {
+                \tif ( IsValid( player ) )
+                \t{
+                \t\tif ( IsAlive( player ) )
+                \t\t{
+                \t\t\tif ( player.isMechanical() )
+                \t\t\t{
+                \t\t\t\tplayer.SetMaxHealth( 100 )
+                \t\t\t}
+                \t\t}
+                \t}
+                }
+            "}
+        );
+    }
+
+    #[test]
+    fn format_if_without_braces() {
+        let input = indoc! {"
+            void function example(entity player) {
+                if (IsValid(player))
+                    player.SetMaxHealth(100)
+            }"};
+        let output = format_with(
+            input,
+            Format {
+                column_limit: 120,
+                indent: "\t".to_string(),
+                indent_columns: 4,
+                ..Format::default()
+            },
+        );
+        assert_eq!(
+            output,
+            indoc! {"
+                void function example( entity player )
+                {
+                \tif ( IsValid( player ) )
+                \t\tplayer.SetMaxHealth( 100 )
                 }
             "}
         );
