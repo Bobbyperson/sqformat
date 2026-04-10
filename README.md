@@ -14,13 +14,13 @@ A code formatter for [Squirrel](http://squirrel-lang.org/), with first-class sup
 
 ## Installation
 
-Requires [Rust](https://rustup.rs/).
+**Download a pre-built binary** from the [latest release](../../releases/latest).
+
+**Or install from source** with [Rust](https://rustup.rs/):
 
 ```sh
-cargo build --release
+cargo install --git https://github.com/Bobbyperson/sqformat
 ```
-
-The binary will be at `target/release/sqformat`.
 
 ## Usage
 
