@@ -2,8 +2,6 @@
 
 A code formatter for [Squirrel](http://squirrel-lang.org/), with first-class support for [Respawn's dialect](https://noskill.gitbook.io/titanfall2/documentation/file-format/nut-and-gnut-squirrel) used in Titanfall 2 and Apex Legends.
 
-> **Warning:** This project is pre-1.0. Formatting output may change between versions and is not guaranteed to preserve the semantics of your code. Always review formatted output and use version control.
-
 ## Features
 
 - Formats all Squirrel language constructs: functions, classes, enums, tables, arrays, control flow, and more
