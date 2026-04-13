@@ -38,6 +38,30 @@ sqformat -i src/*.gnut src/*.nut
 sqformat -i -r src/
 ```
 
+## GitHub Actions
+
+Add this workflow to your project to enforce formatting on every push and pull request:
+
+```yaml
+name: Check Formatting
+
+on: [push, pull_request]
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download sqformat
+        run: |
+          curl -sSL https://github.com/Bobbyperson/sqformat/releases/latest/download/sqformat-linux-x86_64 -o sqformat
+          chmod +x sqformat
+      - name: Check formatting
+        run: ./sqformat --check -r .
+```
+
+This downloads the latest release and checks all `.nut` and `.gnut` files, failing if any would be reformatted.
+
 ## Example
 
 Input:
