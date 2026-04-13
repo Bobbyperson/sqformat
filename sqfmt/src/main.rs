@@ -100,6 +100,7 @@ fn main() {
 
         let total = files.len();
         let show_progress = total > 1 && (args.inplace_edit || args.check);
+        let mut would_reformat: Vec<String> = Vec::new();
 
         for (i, file) in files.iter().enumerate() {
             if show_progress {
@@ -122,8 +123,7 @@ fn main() {
                 Ok(formatted) => {
                     if args.check {
                         if formatted != source {
-                            eprintln!("{}: would reformat", file);
-                            had_error = true;
+                            would_reformat.push(file.clone());
                         }
                     } else if args.inplace_edit {
                         if let Err(e) = std::fs::write(file, &formatted) {
@@ -139,6 +139,13 @@ fn main() {
                     had_error = true;
                 }
             }
+        }
+
+        if !would_reformat.is_empty() {
+            for file in &would_reformat {
+                eprintln!("{}: would reformat", file);
+            }
+            had_error = true;
         }
 
         if had_error {
