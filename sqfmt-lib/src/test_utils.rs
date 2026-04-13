@@ -1005,6 +1005,42 @@ mod integration_tests {
     }
 
     #[test]
+    fn blank_lines_between_assignments_preserved() {
+        // Blank lines between assignment expressions should be preserved.
+        let input = indoc! {"
+            void function Init()
+            {
+                file.unlocks = {}
+                file.entitlementUnlocks = {}
+
+                file.allItems = []
+                file.itemRefToGuid = {}
+
+                file.itemData = {}
+            }
+        "};
+        let output = format_test(input);
+        assert_eq!(output, input);
+        // Also idempotent
+        assert_eq!(format_test(&output), output);
+    }
+
+    #[test]
+    fn blank_lines_between_newslot_assignments_preserved() {
+        // Same fix applies to <- (newslot) assignments
+        let input = indoc! {"
+            void function Init()
+            {
+                a <- 1
+
+                b <- 2
+            }
+        "};
+        let output = format_test(input);
+        assert_eq!(output, input);
+    }
+
+    #[test]
     fn format_if_without_braces() {
         let input = indoc! {"
             void function example(entity player) {

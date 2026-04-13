@@ -224,11 +224,10 @@ fn token_before_lines<'s>(
         // Suppress in single-line mode to avoid breaking single-line layout.
         // Suppress at the start of a block (right after `{`) to avoid blank lines
         // between the opening brace and the first statement/member.
-        if leading_empties > 0
-            && i.has_content()
-            && !i.is_at_block_start()
-            && !suppress_blank_separators
-        {
+        if leading_empties > 0 && i.has_content() && !i.is_at_block_start() {
+            if suppress_blank_separators {
+                return None;
+            }
             i = new_line(i)?;
         }
 
