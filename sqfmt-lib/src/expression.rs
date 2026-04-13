@@ -304,7 +304,9 @@ fn index_expression<'s>(
         alt(
             single_line(tuple((
                 token(expr.open),
+                space,
                 expression(&expr.index),
+                space,
                 token(expr.close),
             ))),
             tuple((

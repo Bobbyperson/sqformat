@@ -581,7 +581,7 @@ mod integration_tests {
                 void function T()
                 {
                     fp.thirdPersonAnim =
-                        EVAC_EMBARK_ANIMS_3P[slot]
+                        EVAC_EMBARK_ANIMS_3P[ slot ]
                 }
             "}
         );
@@ -702,7 +702,7 @@ mod integration_tests {
         // Pattern A: LHS = RHS // comment
         assert_eq!(
             format_test("highlight.paramVecs[ 0 ] = colour // <0.8,0.4,0.2>\n"),
-            "highlight.paramVecs[0] = colour // <0.8,0.4,0.2>\n"
+            "highlight.paramVecs[ 0 ] = colour // <0.8,0.4,0.2>\n"
         );
 
         // Pattern B: LHS = literal_RHS // comment
@@ -722,7 +722,7 @@ mod integration_tests {
             indoc! {r#"
                 void function F()
                 {
-                    params["type"] <- message.typeofmsg // yr
+                    params[ "type" ] <- message.typeofmsg // yr
                 }
             "#}
         );
@@ -730,7 +730,7 @@ mod integration_tests {
 
     #[test]
     fn binary_assignment_trailing_comment_idempotent() {
-        let input = "highlight.paramVecs[0] = colour // <0.8,0.4,0.2>\n";
+        let input = "highlight.paramVecs[ 0 ] = colour // <0.8,0.4,0.2>\n";
         let output = format_test(input);
         let output2 = format_test(&output);
         assert_eq!(output, output2, "not idempotent");
