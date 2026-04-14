@@ -430,35 +430,48 @@ fn call_expression<'s>(expr: &'s CallExpression<'s>) -> impl FnOnce(Writer) -> O
 fn call_args_inline<'s>(
     args: &'s [sqparse::ast::CallArgument<'s>],
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
-    move |i| {
-        if let Some((last, rest)) = args.split_last() {
-            let i =
-                iter(rest.iter().map(|arg| {
-                    tuple((expression(&arg.value), token_or_tag(arg.comma, ","), space))
-                }))(i)?;
-            expression(&last.value)(i)
-        } else {
-            Some(i)
+    move |mut i| {
+        for (idx, arg) in args.iter().enumerate() {
+            i = expression(&arg.value)(i)?;
+            let is_last = idx == args.len() - 1;
+            if !is_last {
+                if arg.comma.is_some() {
+                    i = token_or_tag(arg.comma, ",")(i)?;
+                    i = space(i)?;
+                } else {
+                    // No comma between args (void function)
+                    i = space(i)?;
+                }
+            }
         }
+        Some(i)
     }
 }
 
 fn call_args_multi<'s>(
     args: &'s [sqparse::ast::CallArgument<'s>],
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
-    move |i| {
-        if let Some((last, rest)) = args.split_last() {
-            let i = iter(rest.iter().map(|arg| {
-                tuple((
-                    empty_line,
-                    expression(&arg.value),
-                    token_or_tag(arg.comma, ","),
-                ))
-            }))(i)?;
-            pair(empty_line, expression(&last.value))(i)
-        } else {
-            Some(i)
+    move |mut i| {
+        let mut inline_next = false;
+        for (idx, arg) in args.iter().enumerate() {
+            let is_last = idx == args.len() - 1;
+            if inline_next {
+                i = space(i)?;
+            } else {
+                i = empty_line(i)?;
+            }
+            i = expression(&arg.value)(i)?;
+            if !is_last {
+                if arg.comma.is_some() {
+                    i = token_or_tag(arg.comma, ",")(i)?;
+                    inline_next = false;
+                } else {
+                    // No comma between args (void function)
+                    inline_next = true;
+                }
+            }
         }
+        Some(i)
     }
 }
 

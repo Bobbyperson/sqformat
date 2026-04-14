@@ -1041,6 +1041,30 @@ mod integration_tests {
     }
 
     #[test]
+    fn format_function_as_call_argument() {
+        // When `void` and `function` are on separate lines in the source, the parser
+        // splits them into two call arguments. The formatter should rejoin them.
+        let input = indoc! {"
+            Foo(Bar(), void
+                function(entity player) {
+                    DoThing(player)
+                })"};
+        let output = format_test(input);
+        assert_eq!(
+            output,
+            indoc! {"
+                Foo(
+                    Bar(),
+                    void function( entity player )
+                    {
+                        DoThing( player )
+                    }
+                )
+            "}
+        );
+    }
+
+    #[test]
     fn format_if_without_braces() {
         let input = indoc! {"
             void function example(entity player) {
