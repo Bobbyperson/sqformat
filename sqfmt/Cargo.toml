@@ -7,4 +7,4 @@ license = "MIT"
 [dependencies]
 clap = { version = "4.6.0", features = ["derive"] }
 sqfmt-lib = { path = "../sqfmt-lib" }
-sqparse = { git = "https://github.com/Bobbyperson/sqparse.git", tag = "v0.4.1" }
+sqparse = { git = "https://github.com/Bobbyperson/sqparse.git", tag = "v0.4.2" }
