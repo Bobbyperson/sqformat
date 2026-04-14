@@ -10,4 +10,4 @@ indoc = "2"
 [dependencies]
 im = "15.0"
 lexical = "7.0.5"
-sqparse = { git = "https://github.com/Bobbyperson/sqparse.git", tag = "v0.4.0" }
+sqparse = { git = "https://github.com/Bobbyperson/sqparse.git", tag = "v0.4.1" }
