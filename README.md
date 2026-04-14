@@ -111,4 +111,4 @@ let output = format_source(source, format)?;
 
 ## How It Works
 
-sqformat parses Squirrel source into an AST using [sqparse](https://github.com/cpdt/sqparse), then reconstructs the output using a combinator-based formatter. For each construct, it first tries to fit everything on a single line. If that exceeds the column limit, it falls back to a multi-line layout with proper indentation. This backtracking approach produces compact output without sacrificing readability.
+sqformat parses Squirrel source into an AST using [sqparse](https://github.com/Bobbyperson/sqparse), then reconstructs the output using a combinator-based formatter. For each construct, it first tries to fit everything on a single line. If that exceeds the column limit, it falls back to a multi-line layout with proper indentation. This backtracking approach produces compact output without sacrificing readability.
