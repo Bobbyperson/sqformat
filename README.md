@@ -12,6 +12,8 @@ A code formatter for [Squirrel](http://squirrel-lang.org/), with first-class sup
 
 ## Installation
 
+**VS Code extension** available on the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=Bobbyperson.sqformat-vscode).
+
 **Download a pre-built binary** from the [latest release](../../releases/latest).
 
 **Or install from source** with [Rust](https://rustup.rs/):
