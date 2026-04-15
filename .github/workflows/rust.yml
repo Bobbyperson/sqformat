@@ -1,5 +1,17 @@
 name: Build
-on: [push, pull_request]
+on:
+  push:
+    paths:
+      - '**.rs'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - '.github/workflows/rust.yml'
+  pull_request:
+    paths:
+      - '**.rs'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - '.github/workflows/rust.yml'
 
 jobs:
   format-check:
