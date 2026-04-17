@@ -934,30 +934,21 @@ mod integration_tests {
             }
             }
             }"};
-        let output = format_with(
-            input,
-            Format {
-                column_limit: 120,
-                indent: "\t".to_string(),
-                indent_columns: 4,
-                ..Format::default()
-            },
-        );
         assert_eq!(
-            output,
+            format_test(input),
             indoc! {"
                 void function example( entity player )
                 {
-                \tif ( IsValid( player ) )
-                \t{
-                \t\tif ( IsAlive( player ) )
-                \t\t{
-                \t\t\tif ( player.isMechanical() )
-                \t\t\t{
-                \t\t\t\tplayer.SetMaxHealth( 100 )
-                \t\t\t}
-                \t\t}
-                \t}
+                    if ( IsValid( player ) )
+                    {
+                        if ( IsAlive( player ) )
+                        {
+                            if ( player.isMechanical() )
+                            {
+                                player.SetMaxHealth( 100 )
+                            }
+                        }
+                    }
                 }
             "}
         );
@@ -975,30 +966,21 @@ mod integration_tests {
                     }
                 }
             }"};
-        let output = format_with(
-            input,
-            Format {
-                column_limit: 120,
-                indent: "\t".to_string(),
-                indent_columns: 4,
-                ..Format::default()
-            },
-        );
         assert_eq!(
-            output,
+            format_test(input),
             indoc! {"
                 void function example( entity player )
                 {
-                \tif ( IsValid( player ) )
-                \t{
-                \t\tif ( IsAlive( player ) )
-                \t\t{
-                \t\t\tif ( player.isMechanical() )
-                \t\t\t{
-                \t\t\t\tplayer.SetMaxHealth( 100 )
-                \t\t\t}
-                \t\t}
-                \t}
+                    if ( IsValid( player ) )
+                    {
+                        if ( IsAlive( player ) )
+                        {
+                            if ( player.isMechanical() )
+                            {
+                                player.SetMaxHealth( 100 )
+                            }
+                        }
+                    }
                 }
             "}
         );
@@ -1085,28 +1067,84 @@ mod integration_tests {
     }
 
     #[test]
+    fn format_table_expression_single_line_with_commas() {
+        // slots with commas stay single-line and keep commas
+        assert_eq!(
+            format_test("void function F() { local x = { a = 1, b = 2 } }"),
+            indoc! {"
+                void function F()
+                {
+                    local x = { a = 1, b = 2 }
+                }
+            "}
+        );
+    }
+
+    #[test]
+    fn format_table_expression_single_line_inserts_commas() {
+        // slots without commas collapsed to single-line get commas inserted
+        assert_eq!(
+            format_test("void function F() { local x = { a = 1 b = 2 c = 3 } }"),
+            indoc! {"
+                void function F()
+                {
+                    local x = { a = 1, b = 2, c = 3 }
+                }
+            "}
+        );
+    }
+
+    #[test]
+    fn format_table_expression_multi_line_no_commas() {
+        // slots without commas that don't fit on one line get commas inserted
+        assert_eq!(
+            format_with(
+                indoc! {"
+                    void function F() { local x = { none = 0
+                    happy = 1
+                    sad = 2
+                    angry = 3
+                    think1 = 4
+                    think2 = 5
+                    question = 6 } }"},
+                Format {
+                    column_limit: 40,
+                    indent: "    ".to_string(),
+                    indent_columns: 4,
+                    ..Format::default()
+                }
+            ),
+            indoc! {"
+                void function F()
+                {
+                    local x = {
+                        none = 0,
+                        happy = 1,
+                        sad = 2,
+                        angry = 3,
+                        think1 = 4,
+                        think2 = 5,
+                        question = 6
+                    }
+                }
+            "}
+        );
+    }
+
+    #[test]
     fn format_if_without_braces() {
         let input = indoc! {"
             void function example(entity player) {
                 if (IsValid(player))
                     player.SetMaxHealth(100)
             }"};
-        let output = format_with(
-            input,
-            Format {
-                column_limit: 120,
-                indent: "\t".to_string(),
-                indent_columns: 4,
-                ..Format::default()
-            },
-        );
         assert_eq!(
-            output,
+            format_test(input),
             indoc! {"
                 void function example( entity player )
                 {
-                \tif ( IsValid( player ) )
-                \t\tplayer.SetMaxHealth( 100 )
+                    if ( IsValid( player ) )
+                        player.SetMaxHealth( 100 )
                 }
             "}
         );

@@ -1,6 +1,6 @@
 use crate::combinators::{
     allow_trailing, alt, cond, empty_line, format, indented, iter, opt, pair, single_line, space,
-    tuple,
+    tag, tuple,
 };
 use crate::operator::{binary_operator, postfix_operator, prefix_needs_space, prefix_operator};
 use crate::shared::{identifier, optional_separator, token_or_tag};
@@ -175,7 +175,21 @@ fn table_expression_single_line<'s>(
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| {
         let i = tuple((token(expr.open), space))(i)?;
-        let i = iter(expr.slots.iter().map(|slot| pair(table_slot(slot), space)))(i)?;
+        let last = expr.slots.len().saturating_sub(1);
+        let i = iter(expr.slots.iter().enumerate().map(|(idx, slot)| {
+            move |i| {
+                let i = table_slot_content(slot)(i)?;
+                let i = if idx < last {
+                    match slot.comma {
+                        Some(c) => token(c)(i)?,
+                        None => tag(",")(i)?,
+                    }
+                } else {
+                    opt(slot.comma, token)(i)?
+                };
+                space(i)
+            }
+        }))(i)?;
         let i = opt(expr.spread, |t| pair(token(t), space))(i)?;
         token(expr.close)(i)
     }
@@ -186,12 +200,23 @@ fn table_expression_multi_line<'s>(
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| {
         let i = token(expr.open)(i)?;
+        let last = expr.slots.len().saturating_sub(1);
+        let has_spread = expr.spread.is_some();
         let i = indented(move |i| {
-            let i = iter(
-                expr.slots
-                    .iter()
-                    .map(|slot| pair(empty_line, table_slot(slot))),
-            )(i)?;
+            let i = iter(expr.slots.iter().enumerate().map(|(idx, slot)| {
+                move |i| {
+                    let i = empty_line(i)?;
+                    let i = table_slot_content(slot)(i)?;
+                    if idx < last || has_spread {
+                        match slot.comma {
+                            Some(c) => token(c)(i),
+                            None => tag(",")(i),
+                        }
+                    } else {
+                        opt(slot.comma, token)(i)
+                    }
+                }
+            }))(i)?;
             opt(expr.spread, |t| pair(empty_line, token(t)))(i)
         })(i)?;
         let i = empty_line(i)?;
@@ -199,20 +224,24 @@ fn table_expression_multi_line<'s>(
     }
 }
 
-fn table_slot<'s>(slot: &'s TableSlot<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
-    move |i| {
-        let i = match &slot.ty {
-            TableSlotType::Slot(s) => crate::statement::slot(s)(i)?,
-            TableSlotType::JsonProperty {
-                name_token,
-                colon,
-                value,
-                ..
-            } => tuple((token(name_token), token(colon), space, expression(value)))(i)?,
-        };
-        opt(slot.comma, token)(i)
+fn table_slot_content<'s>(slot: &'s TableSlot<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
+    move |i| match &slot.ty {
+        TableSlotType::Slot(s) => crate::statement::slot(s)(i),
+        TableSlotType::JsonProperty {
+            name_token,
+            colon,
+            value,
+            ..
+        } => tuple((token(name_token), token(colon), space, expression(value)))(i),
     }
 }
+
+// fn table_slot<'s>(slot: &'s TableSlot<'s>) -> impl FnOnce(Writer) -> Option<Writer> + 's {
+//     move |i| {
+//         let i = table_slot_content(slot)(i)?;
+//         opt(slot.comma, token)(i)
+//     }
+// }
 
 fn array_expression<'s>(
     expr: &'s ArrayExpression<'s>,
