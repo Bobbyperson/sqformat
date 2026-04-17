@@ -271,7 +271,7 @@ dependencies = [
 
 [[package]]
 name = "sqfmt-lib"
-version = "1.1.0"
+version = "1.1.2"
 dependencies = [
  "im",
  "indoc",
@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "sqformat"
-version = "1.1.0"
+version = "1.1.2"
 dependencies = [
  "clap",
  "sqfmt-lib",
