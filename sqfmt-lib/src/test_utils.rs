@@ -1065,6 +1065,26 @@ mod integration_tests {
     }
 
     #[test]
+    fn format_property_access_with_trailing_comment() {
+        // A trailing comment on the property should not force it onto a new line.
+        let input = indoc! {"
+            void function Foo() {
+                x = eDamageSourceId
+                    .funnyboomer // damage source id
+            }"};
+        let output = format_test(input);
+        assert_eq!(
+            output,
+            indoc! {"
+                void function Foo()
+                {
+                    x = eDamageSourceId.funnyboomer // damage source id
+                }
+            "}
+        );
+    }
+
+    #[test]
     fn format_if_without_braces() {
         let input = indoc! {"
             void function example(entity player) {

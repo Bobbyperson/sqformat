@@ -323,6 +323,10 @@ fn property_expression<'s>(
     expr: &'s PropertyExpression<'s>,
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| {
+        let property_token = match &expr.property {
+            sqparse::ast::MethodIdentifier::Identifier(id) => id.token,
+            sqparse::ast::MethodIdentifier::Constructor(tok) => tok,
+        };
         let property_writer = |w: Writer| -> Option<Writer> {
             match &expr.property {
                 sqparse::ast::MethodIdentifier::Identifier(id) => identifier(id)(w),
@@ -341,7 +345,15 @@ fn property_expression<'s>(
             pair(
                 expression(&expr.base),
                 alt(
-                    single_line(tuple((token(expr.dot), property_writer))),
+                    // Use token_without_trailing inside single_line so a trailing comment
+                    // on the property doesn't cause single_line to fail. Emit trailing after.
+                    |w: Writer| {
+                        let w = single_line(tuple((
+                            token_without_trailing(expr.dot),
+                            token_without_trailing(property_token),
+                        )))(w)?;
+                        w.with_allow_newlines(token_trailing(property_token))
+                    },
                     indented(tuple((empty_line, token(expr.dot), property_writer))),
                 ),
             ),
