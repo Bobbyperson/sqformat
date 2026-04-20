@@ -7,7 +7,7 @@ Thanks for your interest in contributing! This project is pre-1.0, so there's pl
 You'll need [Rust](https://rustup.rs/) installed.
 
 ```sh
-git clone https://github.com/ASpaceBorneChip/sqformat.git
+git clone https://github.com/Bobbyperson/sqformat.git
 cd sqformat
 cargo build
 cargo test --all-features
@@ -47,6 +47,7 @@ Key modules in `sqfmt-lib/src/`:
 - **`operator.rs`**: Binary, prefix, and postfix operator formatting.
 - **`type_format.rs`**: Type annotation formatting (plain, generic, array, functionref, struct, reference, nullable).
 - **`config.rs`**: `Format` struct with formatting parameters (column limit, indent style, array spacing, etc.).
+- **`shared.rs`**: Helpers for identifiers and optional separators/tokens.
 
 ### The `alt` Pattern
 
@@ -58,11 +59,16 @@ Tests live alongside the code in `#[cfg(test)] mod test` blocks. When adding or 
 
 1. Add a test case that covers the new behavior.
 2. Run `cargo test -p sqfmt-lib` to verify.
-3. Check idempotency on real files, formatting already-formatted output should produce identical results:
+3. If you changed a formatting rule, update `STYLE.md` to match.
+4. Check idempotency on real files, formatting already-formatted output should produce identical results:
    ```sh
    cargo run -- file.nut > /tmp/pass1.nut
    cargo run -- /tmp/pass1.nut > /tmp/pass2.nut
    diff /tmp/pass1.nut /tmp/pass2.nut
+   ```
+   Or run the full idempotency CI job locally with [act](https://github.com/nektos/act):
+   ```sh
+   act --workflows ".github/workflows/rust.yml" --job "idempotency"
    ```
 
 ## Reporting Bugs
