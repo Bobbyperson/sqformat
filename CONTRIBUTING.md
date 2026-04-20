@@ -1,6 +1,6 @@
 # Contributing to sqformat
 
-Thanks for your interest in contributing! This project is pre-1.0, so there's plenty to do.
+Thanks for your interest in contributing!
 
 ## Getting Started
 
