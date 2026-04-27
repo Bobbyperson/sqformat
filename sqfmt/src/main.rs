@@ -182,7 +182,10 @@ fn build_format(args: &Args, cfg: &TomlConfig) -> Format {
         s if s.starts_with("space") => " ".repeat(indent_width),
         "tab" => "\t".to_string(),
         other => {
-            eprintln!("error: unknown indent_style {:?} (expected \"tab\" or \"space\")", other);
+            eprintln!(
+                "error: unknown indent_style {:?} (expected \"tab\" or \"space\")",
+                other
+            );
             std::process::exit(1);
         }
     };
@@ -366,7 +369,10 @@ fn main() {
                     eprintln!("{}: {}", file, e);
                     had_error = true;
                 }
-                FileOutcome::Processed { original, formatted } => {
+                FileOutcome::Processed {
+                    original,
+                    formatted,
+                } => {
                     let changed = original != formatted;
                     if args.diff && changed {
                         print_diff(&file, &original, &formatted);
@@ -390,7 +396,11 @@ fn main() {
                             unchanged += 1;
                         }
                     } else if args.diff {
-                        if changed { reformatted += 1; } else { unchanged += 1; }
+                        if changed {
+                            reformatted += 1;
+                        } else {
+                            unchanged += 1;
+                        }
                     } else {
                         print!("{}", formatted);
                     }
