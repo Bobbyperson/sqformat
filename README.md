@@ -35,7 +35,10 @@ sqformat path/to/file.gnut
 sqformat -i src/*.gnut src/*.nut
 
 # Recursively format a directory in-place
-sqformat -i -r src/
+sqformat -ri src/
+
+# Show help
+sqformat --help
 ```
 
 ## GitHub Actions

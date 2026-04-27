@@ -1,0 +1,12 @@
+# sqformat configuration
+# All values shown are defaults.
+
+column_limit = 160
+indent_style = "tab" # "tab" or "space"
+indent_width = 4
+
+spaces_in_expr_brackets = true
+array_spaces = true
+array_multiline_commas = true
+array_multiline_trailing_commas = false
+array_singleline_trailing_commas = false
