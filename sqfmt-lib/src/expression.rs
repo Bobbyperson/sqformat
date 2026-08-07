@@ -1,6 +1,6 @@
 use crate::combinators::{
-    allow_trailing, alt, cond, empty_line, format, indented, iter, opt, pair, single_line, space,
-    tag, tuple,
+    allow_trailing, alt, cond, definitely_multi_line, empty_line, format, indented, iter, opt,
+    pair, single_line, space, tag, tuple,
 };
 use crate::operator::{binary_operator, postfix_operator, prefix_needs_space, prefix_operator};
 use crate::shared::{identifier, optional_separator, token_or_tag};
@@ -69,7 +69,13 @@ fn expression_without_parens<'s>(
             ))),
             // Branches 2+: Evaluate LHS once, then try right-side strategies.
             // This avoids O(K^N) blowup on left-associative binary chains.
-            move |i: Writer| {
+            //
+            // `definitely_multi_line` is load-bearing for performance: when the writer
+            // is already in single_line mode, branches 3 and 4 can never succeed (they
+            // need a newline) and branch 2 is exactly branch 1 re-done, so running the
+            // fallback would format the LHS a second time at every level of the chain,
+            // O(2^N) on long chains like `"a" + "b" + ... + "z"`.
+            definitely_multi_line(move |i: Writer| {
                 let left_result = expression(&b.left)(i)?;
 
                 // Branch 2: op+right on same line as LHS (also handles before_line
@@ -101,7 +107,7 @@ fn expression_without_parens<'s>(
                     space,
                     expression(&b.right),
                 )))(left_result)
-            },
+            }),
         )(i),
         Expression::Prefix(p) => {
             if prefix_needs_space(&p.operator) {
