@@ -431,8 +431,8 @@ dependencies = [
 
 [[package]]
 name = "sqparse"
-version = "0.4.0"
-source = "git+https://github.com/Bobbyperson/sqparse.git?tag=v0.4.2#8c432bd44650e97d4dd08e532cb94efb3aa8c5af"
+version = "0.5.0"
+source = "git+https://github.com/Bobbyperson/sqparse.git?tag=v0.5.0#4ad29511176b3b9f99c97a88236d0c2dc687a41f"
 dependencies = [
  "lazy_static",
  "lexical",
