@@ -1,15 +1,14 @@
 [package]
-name = "sqformat"
-version = "1.2.1"
+name = "sqformat-lsp"
+version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
 [dependencies]
-clap = { version = "4.6.6", features = ["derive"] }
-rayon = "1.12.0"
 serde = { version = "1", features = ["derive"] }
-similar = "3.2.0"
+serde_json = "1"
 sqfmt-lib = { path = "../sqfmt-lib" }
 sqfmt-lint = { path = "../sqfmt-lint" }
 sqparse = { git = "https://github.com/Bobbyperson/sqparse.git", tag = "v0.5.0" }
-toml = "1.1.4"
+tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread"] }
+tower-lsp-server = "0.23"

@@ -1,37 +1,4 @@
 use crate::config::Format;
-use crate::writer::Writer;
-use std::sync::Arc;
-
-pub fn mock_format() -> Format {
-    Format {
-        column_limit: 20,
-
-        indent: "    ".to_string(),
-        indent_columns: 4,
-
-        spaces_in_expr_brackets: false,
-
-        array_spaces: false,
-        array_multiline_commas: false,
-        array_multiline_trailing_commas: false,
-        array_singleline_trailing_commas: false,
-    }
-}
-
-pub fn test_write<F: FnOnce(Writer) -> Option<Writer>>(f: F) -> String {
-    f(Writer::new(Arc::new(mock_format()))).unwrap().to_string()
-}
-
-pub fn test_write_columns<F: FnOnce(Writer) -> Option<Writer>>(
-    column_limit: usize,
-    f: F,
-) -> String {
-    let format = Format {
-        column_limit,
-        ..mock_format()
-    };
-    f(Writer::new(Arc::new(format))).unwrap().to_string()
-}
 
 /// Helper to format source code with a given format configuration.
 pub fn format_with(source: &str, format: Format) -> String {
@@ -533,6 +500,99 @@ mod integration_tests {
         let input = "const int MAX = 100";
         let output = format_test(input);
         assert_eq!(output, "const int MAX = 100\n");
+    }
+
+    #[test]
+    fn format_source_normalizes_and_attaches_comments() {
+        let output = crate::format_source(
+            indoc! {"
+                void function Example() {
+                // This comment needs wrapping into readable lines
+                /* first */
+                x=/* second */ y // trailing comment must not wrap
+                }"},
+            Format {
+                column_limit: 40,
+                indent: "    ".to_string(),
+                indent_columns: 4,
+                ..Format::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            output,
+            indoc! {"
+                void function Example()
+                {
+                    // This comment needs wrapping
+                    // into readable lines
+                    /* first */
+                    x = /* second */ y // trailing comment must not wrap
+                }
+            "}
+        );
+    }
+
+    #[test]
+    fn format_source_default_preserves_block_and_doc_comments_idempotently() {
+        let input = indoc! {"
+            /**
+             * Documents Example.
+             */
+            void function Example() {
+            /* block comment */
+            DoThing()
+            }"};
+        let output = crate::format_source_default(input).unwrap();
+
+        assert_eq!(
+            output,
+            concat!(
+                "/**\n",
+                " * Documents Example.\n",
+                "*/\n",
+                "void function Example()\n",
+                "{\n",
+                "\t/* block comment */\n",
+                "\tDoThing()\n",
+                "}\n",
+            )
+        );
+        assert_eq!(crate::format_source_default(&output).unwrap(), output);
+    }
+
+    #[test]
+    fn format_source_default_normalizes_literals_and_preserves_operator_spelling() {
+        let output = crate::format_source_default(indoc! {r#"
+            void function Example() {
+            local hex=0x7B
+            local octal=0173
+            local scientific=1.2345678e11
+            local character='A'
+            local literal="plain"
+            local verbatim=@"verbatim"
+            local asset=$"asset"
+            local comparison=a<=>b
+            }"#})
+        .unwrap();
+
+        assert_eq!(
+            output,
+            concat!(
+                "void function Example()\n",
+                "{\n",
+                "\tlocal hex = 0x7b\n",
+                "\tlocal octal = 0173\n",
+                "\tlocal scientific = 1.2345678e11\n",
+                "\tlocal character = 'A'\n",
+                "\tlocal literal = \"plain\"\n",
+                "\tlocal verbatim = @\"verbatim\"\n",
+                "\tlocal asset = $\"asset\"\n",
+                "\tlocal comparison = a <=> b\n",
+                "}\n",
+            )
+        );
     }
 
     #[test]
@@ -1095,7 +1155,7 @@ mod integration_tests {
     }
 
     #[test]
-    fn format_table_expression_multi_line_no_commas() {
+    fn format_table_expression_multiline_inserts_commas() {
         // slots without commas that don't fit on one line get commas inserted
         assert_eq!(
             format_with(
@@ -1147,6 +1207,55 @@ mod integration_tests {
                         player.SetMaxHealth( 100 )
                 }
             "}
+        );
+    }
+
+    #[test]
+    fn format_disabled_region_is_preserved() {
+        let input = indoc! {"
+            void function Example() {
+            // fmt: off
+              if(unformatted){DoThing(  1,2 );}
+
+                    KeepThisIndent()
+            // fmt: on
+            if(formatted){DoThing(1,2)}
+            }"};
+        let expected = concat!(
+            "void function Example()\n",
+            "{\n",
+            "    // fmt: off\n",
+            "  if(unformatted){DoThing(  1,2 );}\n",
+            "\n",
+            "        KeepThisIndent()\n",
+            "    // fmt: on\n",
+            "    if ( formatted )\n",
+            "    {\n",
+            "        DoThing( 1, 2 )\n",
+            "    }\n",
+            "}\n",
+        );
+        let output = format_test(input);
+        assert_eq!(output, expected);
+        assert_eq!(format_test(&output), output);
+    }
+
+    #[test]
+    fn unmatched_fmt_off_disables_to_end_of_file() {
+        let input = indoc! {"
+            void function Example() {
+            // fmt: off
+              DoThing(  1,2 );
+            }"};
+        assert_eq!(
+            format_test(input),
+            concat!(
+                "void function Example()\n",
+                "{\n",
+                "    // fmt: off\n",
+                "  DoThing(  1,2 );\n",
+                "}\n",
+            )
         );
     }
 }
