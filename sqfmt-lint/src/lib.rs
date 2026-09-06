@@ -22,8 +22,9 @@ pub use semantic::{
     TypeIdentity, ValueSource,
 };
 pub use semantic_rules::{
-    ARGUMENT_TYPE_RULE, CALL_ARITY_RULE, DUPLICATE_DECLARATION_RULE, INITIALIZER_TYPE_RULE,
-    INVALID_MEMBER_RULE, RETURN_TYPE_RULE, ResolvedType, SemanticFile, SemanticMember,
+    ARGUMENT_TYPE_RULE, CALL_ARITY_RULE, CALLBACK_SIGNATURE_MISMATCH_RULE,
+    DUPLICATE_DECLARATION_RULE, INITIALIZER_TYPE_RULE, INVALID_MEMBER_RULE,
+    REMOTE_FUNCTION_NOT_GLOBAL_RULE, RETURN_TYPE_RULE, ResolvedType, SemanticFile, SemanticMember,
     SemanticWorkspace,
 };
 
@@ -38,6 +39,13 @@ pub const UNRESOLVED_MANIFEST_CALLBACK_RULE: &str = "unresolved-manifest-callbac
 pub const REMOTE_FUNCTION_CONTRACT_RULE: &str = "remote-function-contract-mismatch";
 pub const THREAD_IN_POLLING_LOOP_RULE: &str = "thread-spawned-inside-polling-loop";
 pub const FIND_USED_AS_BOOLEAN_RULE: &str = "find-used-as-boolean";
+pub const INVALID_REMOTE_ARGUMENT_TYPE_RULE: &str = "invalid-remote-argument-type";
+pub const INVALID_HTTP_REQUEST_OPTIONS_RULE: &str = "invalid-http-request-options";
+pub const UNSAFE_FILE_SIZE_QUERY_RULE: &str = "unsafe-file-size-query";
+pub const EMPTY_ELSE_RULE: &str = "empty-else";
+pub const UNREACHABLE_CODE_RULE: &str = "unreachable-code";
+pub const DUPLICATE_SWITCH_CASE_RULE: &str = "duplicate-switch-case";
+pub const NO_EFFECT_EXPRESSION_RULE: &str = "no-effect-expression";
 
 #[derive(Clone, Debug, Default)]
 pub struct Analysis {
@@ -104,9 +112,32 @@ pub struct Diagnostic {
     pub message: String,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct LintOptions {
     pub advisory: bool,
+    pub select: Option<HashSet<String>>,
+    pub extend_select: HashSet<String>,
+    pub extend_ignore: HashSet<String>,
+}
+
+impl LintOptions {
+    pub fn enables(&self, rule: &str) -> bool {
+        if selector_matches(&self.extend_ignore, rule) {
+            return false;
+        }
+        selector_matches(&self.extend_select, rule)
+            || self
+                .select
+                .as_ref()
+                .map_or(!is_advisory_rule(rule), |rules| {
+                    selector_matches(rules, rule)
+                })
+            || self.advisory && is_advisory_rule(rule)
+    }
+}
+
+fn selector_matches(selectors: &HashSet<String>, rule: &str) -> bool {
+    selectors.contains("ALL") || selectors.contains(rule)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -245,9 +276,7 @@ impl Workspace {
                 .then_with(|| left.rule.cmp(right.rule))
         });
         diagnostics.dedup();
-        if !options.advisory {
-            diagnostics.retain(|diagnostic| !is_advisory_rule(diagnostic.rule));
-        }
+        diagnostics.retain(|diagnostic| options.enables(diagnostic.rule));
         analysis.retain_unsuppressed(&mut diagnostics);
         diagnostics
     }
@@ -376,11 +405,16 @@ pub fn is_valid_identifier(value: &str) -> bool {
 
 /// Collects the lint facts from statements that have already been parsed.
 pub fn analyze_statements(statements: &[&Statement<'_>]) -> Analysis {
+    let mut analysis = collect_analysis(statements);
+    rules::analyze(None, statements, &mut analysis);
+    analysis
+}
+
+fn collect_analysis(statements: &[&Statement<'_>]) -> Analysis {
     let mut analysis = Analysis::default();
     for statement in statements {
         visit_statement(statement, &mut analysis);
     }
-    rules::analyze(statements, &mut analysis);
     analysis
 }
 
@@ -390,7 +424,8 @@ pub fn analyze_statements_with_tokens(
     statements: &[&Statement<'_>],
     tokens: &[&Token<'_>],
 ) -> Analysis {
-    let mut analysis = analyze_statements(statements);
+    let mut analysis = collect_analysis(statements);
+    rules::analyze(Some(source), statements, &mut analysis);
     analysis.suppressions = lint_suppressions(source, tokens);
     analysis
 }
@@ -487,7 +522,7 @@ pub fn diagnostics_with_options(
     let workspace = Workspace::new(analyses);
     analyses
         .iter()
-        .map(|analysis| workspace.diagnostics_with_options(analysis, options))
+        .map(|analysis| workspace.diagnostics_with_options(analysis, options.clone()))
         .collect()
 }
 
@@ -984,18 +1019,28 @@ fn called_expression_name<'s>(expression: &Expression<'s>) -> Option<&'s str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Diagnostic, LintOptions, analyze, diagnostics, diagnostics_with_options};
+    use super::{
+        DUPLICATE_SWITCH_CASE_RULE, Diagnostic, EMPTY_ELSE_RULE, ENTITY_USE_AFTER_YIELD_RULE,
+        LintOptions, NO_EFFECT_EXPRESSION_RULE, THREAD_IN_POLLING_LOOP_RULE, UNREACHABLE_CODE_RULE,
+        WAIT_ZERO_RULE, analyze, diagnostics, diagnostics_with_options,
+    };
 
     fn lint(sources: &[&str]) -> Vec<String> {
         let analyses: Vec<_> = sources
             .iter()
             .map(|source| analyze(source).unwrap())
             .collect();
-        diagnostics_with_options(&analyses, LintOptions { advisory: true })
-            .into_iter()
-            .flatten()
-            .map(|diagnostic| diagnostic.message)
-            .collect()
+        diagnostics_with_options(
+            &analyses,
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
+        )
+        .into_iter()
+        .flatten()
+        .map(|diagnostic| diagnostic.message)
+        .collect()
     }
 
     #[test]
@@ -1012,10 +1057,16 @@ void function Poll( entity ent ) {
         let analyses = [analyze(source).unwrap()];
 
         assert!(diagnostics(&analyses)[0].is_empty());
-        let diagnostics = diagnostics_with_options(&analyses, LintOptions { advisory: true })[0]
-            .iter()
-            .map(|diagnostic| (diagnostic.rule, &source[diagnostic.range.clone()]))
-            .collect::<Vec<_>>();
+        let diagnostics = diagnostics_with_options(
+            &analyses,
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
+        )[0]
+        .iter()
+        .map(|diagnostic| (diagnostic.rule, &source[diagnostic.range.clone()]))
+        .collect::<Vec<_>>();
         assert_eq!(
             diagnostics,
             vec![
@@ -1025,16 +1076,153 @@ void function Poll( entity ent ) {
         );
     }
 
+    #[test]
+    fn lint_options_select_extend_and_ignore_rules() {
+        let source = r#"
+void function Poll( entity ent ) {
+	wait 0
+	while ( true ) {
+		thread Update()
+		WaitFrame()
+		ent.Show()
+	}
+}
+"#;
+        let analyses = [analyze(source).unwrap()];
+        let selected = diagnostics_with_options(
+            &analyses,
+            LintOptions {
+                select: Some([THREAD_IN_POLLING_LOOP_RULE.to_string()].into()),
+                ..Default::default()
+            },
+        )[0]
+        .iter()
+        .map(|diagnostic| diagnostic.rule)
+        .collect::<Vec<_>>();
+        assert_eq!(selected, [THREAD_IN_POLLING_LOOP_RULE]);
+
+        let extended = diagnostics_with_options(
+            &analyses,
+            LintOptions {
+                extend_select: [ENTITY_USE_AFTER_YIELD_RULE.to_string()].into(),
+                extend_ignore: [WAIT_ZERO_RULE.to_string()].into(),
+                ..Default::default()
+            },
+        )[0]
+        .iter()
+        .map(|diagnostic| diagnostic.rule)
+        .collect::<Vec<_>>();
+        assert_eq!(extended, [ENTITY_USE_AFTER_YIELD_RULE]);
+    }
+
+    #[test]
+    fn all_selector_enables_advisory_rules_and_respects_ignores() {
+        let options = LintOptions {
+            select: Some(["ALL".to_string()].into()),
+            extend_ignore: [ENTITY_USE_AFTER_YIELD_RULE.to_string()].into(),
+            ..Default::default()
+        };
+
+        assert!(options.enables(WAIT_ZERO_RULE));
+        assert!(options.enables(THREAD_IN_POLLING_LOOP_RULE));
+        assert!(!options.enables(ENTITY_USE_AFTER_YIELD_RULE));
+    }
+
+    #[test]
+    fn reports_comment_free_empty_else_branch() {
+        assert_diagnostics(
+            &[
+                "void function Example(bool ready) { if (ready) { Work() } else {} }",
+                "void function Documented(bool ready) { if (ready) { Work() } else { // Intentionally ignored.\n} }",
+            ],
+            LintOptions::default(),
+            &[(EMPTY_ELSE_RULE, 0, "else")],
+        );
+    }
+
+    #[test]
+    fn reports_first_statement_in_each_unreachable_region() {
+        assert_diagnostics(
+            &[
+                "void function Example(bool stop) { if (stop) { return; unreachable; Nested() } return; Final() }",
+                "void function Sentinel() { unreachable; AfterSentinel() }",
+                "void function Constant() { if (true) return; AfterConstant() }",
+                "void function Commented() { return; /*\n#else\n*/ AfterComment() }",
+            ],
+            LintOptions::default(),
+            &[
+                (UNREACHABLE_CODE_RULE, 0, "Nested()"),
+                (UNREACHABLE_CODE_RULE, 0, "Final()"),
+                (UNREACHABLE_CODE_RULE, 1, "AfterSentinel()"),
+                (UNREACHABLE_CODE_RULE, 2, "AfterConstant()"),
+                (UNREACHABLE_CODE_RULE, 3, "AfterComment()"),
+            ],
+        );
+    }
+
+    #[test]
+    fn does_not_carry_unreachable_flow_across_conditional_directives() {
+        assert_diagnostics(
+            &[
+                "void function Example() {\n#if SERVER\nreturn\n#else\nWork()\n#endif\nFinal()\n}",
+                "void function Aliases() {\n#ifdef SERVER\nreturn\n#elif CLIENT\nWork()\n#endif\nFinal()\n}",
+            ],
+            LintOptions::default(),
+            &[],
+        );
+    }
+
+    #[test]
+    fn reports_duplicate_literal_and_default_switch_cases() {
+        assert_diagnostics(
+            &[
+                "void function Example(int value) { switch (value) { case 1: break; case 0x1: break; default: break; default: break; case VALUE: break; case VALUE: break; case (2): break; case 2: break; case -1: break; case -0x1: break; case \"x\": break; case @\"x\": break } }",
+                "void function Conditional(int value) { switch (value) {\n#if SERVER\ncase 1: break; default: break;\n#else\ncase 1: break; default: break;\n#endif\n} }",
+                "void function Commented(int value) { switch (value) { case 3: break; /*\n#else\n*/ case 3: break } }",
+            ],
+            LintOptions::default(),
+            &[
+                (DUPLICATE_SWITCH_CASE_RULE, 0, "case"),
+                (DUPLICATE_SWITCH_CASE_RULE, 0, "default"),
+                (DUPLICATE_SWITCH_CASE_RULE, 0, "case"),
+                (DUPLICATE_SWITCH_CASE_RULE, 0, "case"),
+                (DUPLICATE_SWITCH_CASE_RULE, 0, "case"),
+                (DUPLICATE_SWITCH_CASE_RULE, 2, "case"),
+            ],
+        );
+    }
+
+    #[test]
+    fn reports_only_expression_statements_with_no_visible_effect() {
+        assert_diagnostics(
+            &[
+                "void function Example(int value, table object) { value; object.member; 1 + 2; Work(); value = 2; value++; delete object.member; clone object; <1, 2, 3>; expect int(value); unreachable }",
+            ],
+            LintOptions::default(),
+            &[
+                (NO_EFFECT_EXPRESSION_RULE, 0, "value"),
+                (NO_EFFECT_EXPRESSION_RULE, 0, "object.member"),
+                (NO_EFFECT_EXPRESSION_RULE, 0, "1 + 2"),
+            ],
+        );
+    }
+
     fn lint_rules(sources: &[&str]) -> Vec<&'static str> {
         let analyses: Vec<_> = sources
             .iter()
             .map(|source| analyze(source).unwrap())
             .collect();
-        diagnostics_with_options(&analyses, LintOptions { advisory: true })
-            .into_iter()
-            .flatten()
-            .map(|diagnostic| diagnostic.rule)
-            .collect()
+        diagnostics_with_options(
+            &analyses,
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
+        )
+        .into_iter()
+        .flatten()
+        .map(|diagnostic| diagnostic.rule)
+        .collect()
     }
 
     fn assert_diagnostics(
@@ -1113,7 +1301,10 @@ void function Poll() {
 "#;
         assert_diagnostics(
             &[source],
-            LintOptions { advisory: true },
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
             &[("threaded-loop-without-wait", 0, "while")],
         );
     }
@@ -1181,8 +1372,14 @@ void function Poll() {
 "#;
         assert_diagnostics(
             &[source],
-            LintOptions { advisory: true },
-            &[("threaded-loop-without-wait", 0, "while")],
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
+            &[
+                ("threaded-loop-without-wait", 0, "while"),
+                ("unreachable-code", 0, "break"),
+            ],
         );
     }
 
@@ -1201,7 +1398,10 @@ void function Poll() {
 "#;
         assert_diagnostics(
             &[source],
-            LintOptions { advisory: true },
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
             &[("threaded-loop-without-wait", 0, "do")],
         );
     }
@@ -1220,8 +1420,14 @@ void function Poll() {
 "#;
         assert_diagnostics(
             &[source],
-            LintOptions { advisory: true },
-            &[("threaded-loop-without-wait", 0, "while")],
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
+            &[
+                ("threaded-loop-without-wait", 0, "while"),
+                ("unreachable-code", 0, "WaitFrame()"),
+            ],
         );
     }
 
@@ -1241,7 +1447,10 @@ void function Poll() {
 "#;
         assert_diagnostics(
             &[source],
-            LintOptions { advisory: true },
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
             &[
                 ("threaded-loop-without-wait", 0, "while"),
                 ("threaded-loop-without-wait", 0, "while"),
@@ -1307,7 +1516,10 @@ void function Poll() {
         ];
         assert_diagnostics(
             &sources,
-            LintOptions { advisory: true },
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
             &[("threaded-loop-without-wait", 1, "for")],
         );
     }
@@ -1327,7 +1539,10 @@ void function Poll() {
 "#;
         assert_diagnostics(
             &[source],
-            LintOptions { advisory: true },
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
             &[("threaded-loop-without-wait", 0, "while")],
         );
     }
@@ -1337,7 +1552,10 @@ void function Poll() {
         let source = "void function Poll() { wait 0 }";
         assert_diagnostics(
             &[source],
-            LintOptions { advisory: true },
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
             &[("wait-zero", 0, "0")],
         );
     }
@@ -1352,7 +1570,10 @@ void function Show( int handle ) {
 "#;
         assert_diagnostics(
             &[source],
-            LintOptions { advisory: true },
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
             &[("unchecked-encoded-ehandle", 0, "ent")],
         );
     }
@@ -1393,7 +1614,10 @@ void function Show() {
 "#;
         assert_diagnostics(
             &[source],
-            LintOptions { advisory: true },
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
             &[("invalid-entity-use", 0, "ent")],
         );
     }
@@ -1408,7 +1632,10 @@ void function Show( entity ornull ent ) {
 "#;
         assert_diagnostics(
             &[source],
-            LintOptions { advisory: true },
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
             &[("invalid-entity-use", 0, "ent")],
         );
     }
@@ -1451,7 +1678,10 @@ void function Show( entity ent ) {
 "#;
         assert_diagnostics(
             &[source],
-            LintOptions { advisory: true },
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
             &[("invalid-entity-use", 0, "ent")],
         );
     }
@@ -1466,7 +1696,10 @@ void function Show( entity ent ) {
 "#;
         assert_diagnostics(
             &[source],
-            LintOptions { advisory: true },
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
             &[("entity-use-after-yield", 0, "ent")],
         );
     }
@@ -1494,7 +1727,10 @@ string function Lookup( array<string> values, string wanted ) {
 "#;
         assert_diagnostics(
             &[source],
-            LintOptions { advisory: true },
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
             &[("unsafe-array-index", 0, "[index]")],
         );
     }
@@ -1524,7 +1760,10 @@ bool function Contains( array<string> values, string wanted ) {
 "#;
         assert_diagnostics(
             &[source],
-            LintOptions { advisory: true },
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
             &[("find-used-as-boolean", 0, "values.find( wanted )")],
         );
     }
@@ -1541,7 +1780,10 @@ void function Poll() {
 "#;
         assert_diagnostics(
             &[source],
-            LintOptions { advisory: true },
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
             &[("thread-spawned-inside-polling-loop", 0, "thread")],
         );
     }
@@ -1554,7 +1796,10 @@ void function Poll() {
         ];
         assert_diagnostics(
             &sources,
-            LintOptions { advisory: true },
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
             &[
                 ("unregistered-signal", 0, "\"CustomDone\""),
                 ("unregistered-signal", 1, "\"CustomDone\""),
@@ -1591,9 +1836,203 @@ void function Send( entity player ) {
         ];
         assert_diagnostics(
             &sources,
-            LintOptions { advisory: true },
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
             &[("remote-function-contract-mismatch", 1, "\"RemoteMessage\"")],
         );
+    }
+
+    #[test]
+    fn reports_invalid_remote_argument_types() {
+        let source = r#"
+void function Send( entity player ) {
+	Remote_CallFunction_NonReplay( player, "RemoteMessage", "text", [], {} )
+}
+"#;
+        assert_diagnostics(
+            &[source],
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
+            &[
+                ("invalid-remote-argument-type", 0, "\"text\""),
+                ("invalid-remote-argument-type", 0, "[]"),
+                ("invalid-remote-argument-type", 0, "{}"),
+            ],
+        );
+    }
+
+    #[test]
+    fn accepts_supported_or_unknown_remote_argument_types() {
+        let rules = lint_rules(&[r#"
+void function Send( entity player, var value ) {
+	Remote_CallFunction_UI( player, "RemoteMessage", null, true, 1, -1.5, value, GetValue() )
+}
+"#]);
+
+        assert!(!rules.contains(&"invalid-remote-argument-type"));
+    }
+
+    #[test]
+    fn reports_invalid_http_request_options() {
+        let source = r#"
+void function Send() {
+	HttpRequest request
+	request.method = HttpRequestMethod.GET
+	request.body = "{}"
+}
+"#;
+        assert_diagnostics(
+            &[source],
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
+            &[("invalid-http-request-options", 0, "request.body")],
+        );
+    }
+
+    #[test]
+    fn reports_http_body_combined_with_query_parameters() {
+        let source = r#"
+void function Send() {
+	HttpRequest request
+	request.method = HttpRequestMethod.POST
+	request.queryParameters["id"] <- ["42"]
+	request.body = "{}"
+}
+"#;
+        assert_diagnostics(
+            &[source],
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
+            &[("invalid-http-request-options", 0, "request.body")],
+        );
+    }
+
+    #[test]
+    fn reports_non_post_method_assigned_after_http_body() {
+        let source = r#"
+void function Send() {
+	HttpRequest request
+	request.body = "{}"
+	request.method = HttpRequestMethod.GET
+}
+"#;
+        assert_diagnostics(
+            &[source],
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
+            &[("invalid-http-request-options", 0, "request.method")],
+        );
+    }
+
+    #[test]
+    fn accepts_valid_http_request_options() {
+        let rules = lint_rules(&[r#"
+void function Send() {
+	HttpRequest request
+	request.method = HttpRequestMethod.POST
+	request.body = "{}"
+}
+"#]);
+
+        assert!(!rules.contains(&"invalid-http-request-options"));
+    }
+
+    #[test]
+    fn reports_http_options_invalid_on_one_branch() {
+        let source = r#"
+void function Send( bool usePost ) {
+	HttpRequest request
+	if ( usePost )
+		request.method = HttpRequestMethod.POST
+	else
+		request.method = HttpRequestMethod.GET
+	request.body = "{}"
+}
+"#;
+        assert_diagnostics(
+            &[source],
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
+            &[("invalid-http-request-options", 0, "request.body")],
+        );
+    }
+
+    #[test]
+    fn reports_file_size_query_without_existence_guard() {
+        let source = r#"
+int function Size( string path ) {
+	return NSGetFileSize( path )
+}
+"#;
+        assert_diagnostics(
+            &[source],
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
+            &[("unsafe-file-size-query", 0, "path")],
+        );
+    }
+
+    #[test]
+    fn accepts_file_size_query_after_existence_guard() {
+        let rules = lint_rules(&[r#"
+int function Size( string path ) {
+	if ( !NSDoesFileExist( path ) )
+		return 0
+	return NSGetFileSize( path )
+}
+"#]);
+
+        assert!(!rules.contains(&"unsafe-file-size-query"));
+    }
+
+    #[test]
+    fn reassigned_path_requires_a_new_existence_guard() {
+        let source = r#"
+int function Size( string path, string otherPath ) {
+	if ( NSDoesFileExist( path ) ) {
+		path = otherPath
+		return NSGetFileSize( path )
+	}
+	return 0
+}
+"#;
+        assert_diagnostics(
+            &[source],
+            LintOptions {
+                advisory: true,
+                ..Default::default()
+            },
+            &[("unsafe-file-size-query", 0, "path")],
+        );
+    }
+
+    #[test]
+    fn accepts_asserted_and_literal_file_existence_guards() {
+        let rules = lint_rules(&[r#"
+int function Size( string path ) {
+	Assert( NSDoesFileExist( path ) )
+	int first = NSGetFileSize( path )
+	if ( NSDoesFileExist( "save.json" ) )
+		return first + NSGetFileSize( "save.json" )
+	return first
+}
+"#]);
+
+        assert!(!rules.contains(&"unsafe-file-size-query"));
     }
 
     #[test]

@@ -32,6 +32,7 @@ Builds a temporary workspace per check, so it runs anywhere.
 | `check_duplicate_declarations` | a redeclared local is published as a warning with the first declaration attached, while exclusive `#if` branches are not |
 | `check_cross_file_lint_refresh` | changing an open caller updates diagnostics in another open document |
 | `check_unopened_workspace_lint` | workspace diagnostics are published before the affected file is opened |
+| `check_configured_lint_selection` | the nearest config extends and ignores lint rules for LSP diagnostics |
 | `check_invalid_members` | a name missing from a known struct is reported, while an `entity` receiver and a table literal stay silent |
 | `check_call_arity` | wrong arity for a known function is reported while overridable and unknown calls stay silent |
 | `check_type_mismatch` | incompatible known declared types are reported while subclass and open types stay silent |

@@ -306,6 +306,28 @@ def check_unopened_workspace_lint(server):
     shutil.rmtree(root)
 
 
+def check_configured_lint_selection(server):
+    """The nearest config can add an advisory rule and ignore a default rule."""
+    root = tempfile.mkdtemp()
+    write(
+        root,
+        ".sqformat.toml",
+        '[lint]\nextend-select = ["thread-spawned-inside-polling-loop"]\n'
+        'extend-ignore = ["wait-zero"]\n',
+    )
+    source = "void function Poll() { wait 0; while ( true ) { thread Update(); WaitFrame() } }\n"
+    path = write(root, "rules.gnut", source)
+    client = LspClient(server, root)
+    client.open(path, source)
+
+    published = client.diagnostics(path)
+    client.shutdown()
+    shutil.rmtree(root)
+    assert [item["code"] for item in published] == [
+        "thread-spawned-inside-polling-loop"
+    ], published
+
+
 def check_invalid_members(server):
     """A name missing from a fully known struct or class is reported, open owners stay silent."""
     root = tempfile.mkdtemp()
@@ -454,6 +476,7 @@ CHECKS = [
     check_duplicate_declarations,
     check_cross_file_lint_refresh,
     check_unopened_workspace_lint,
+    check_configured_lint_selection,
     check_invalid_members,
     check_call_arity,
     check_type_mismatch,

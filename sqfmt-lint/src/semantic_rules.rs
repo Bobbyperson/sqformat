@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::ops::Range;
 
@@ -13,6 +13,8 @@ pub const CALL_ARITY_RULE: &str = "call-arity";
 pub const ARGUMENT_TYPE_RULE: &str = "argument-type";
 pub const INITIALIZER_TYPE_RULE: &str = "initializer-type";
 pub const RETURN_TYPE_RULE: &str = "return-type";
+pub const REMOTE_FUNCTION_NOT_GLOBAL_RULE: &str = "remote-function-not-global";
+pub const CALLBACK_SIGNATURE_MISMATCH_RULE: &str = "callback-signature-mismatch";
 
 #[derive(Clone, Debug)]
 pub struct SemanticFile<'a, I> {
@@ -47,6 +49,9 @@ pub struct SemanticMember<I> {
 
 pub struct SemanticWorkspace<'a, I> {
     files: Vec<SemanticFile<'a, I>>,
+    file_indices: HashMap<I, usize>,
+    declaration_files: HashMap<String, Vec<usize>>,
+    nominal_owner_files: HashMap<String, Vec<usize>>,
 }
 
 impl<'a, I> SemanticWorkspace<'a, I>
@@ -54,8 +59,36 @@ where
     I: Clone + Eq + Hash + Ord,
 {
     pub fn new(files: impl IntoIterator<Item = SemanticFile<'a, I>>) -> Self {
+        let files = files.into_iter().collect::<Vec<_>>();
+        let mut file_indices = HashMap::new();
+        let mut declaration_files: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut nominal_owner_files: HashMap<String, Vec<usize>> = HashMap::new();
+        for (index, file) in files.iter().enumerate() {
+            file_indices.insert(file.id.clone(), index);
+            let mut names = HashSet::new();
+            let mut owners = HashSet::new();
+            for declaration in &file.document.declarations {
+                if names.insert(&declaration.name) {
+                    declaration_files
+                        .entry(declaration.name.clone())
+                        .or_default()
+                        .push(index);
+                }
+                if let Some(TypeIdentity::Nominal(owner)) = &declaration.owner
+                    && owners.insert(owner)
+                {
+                    nominal_owner_files
+                        .entry(owner.clone())
+                        .or_default()
+                        .push(index);
+                }
+            }
+        }
         Self {
-            files: files.into_iter().collect(),
+            files,
+            file_indices,
+            declaration_files,
+            nominal_owner_files,
         }
     }
 
@@ -76,6 +109,8 @@ where
         diagnostics.extend(self.call_arity_diagnostics(file, document));
         diagnostics.extend(self.argument_type_diagnostics(file, document));
         diagnostics.extend(self.type_diagnostics(file, document));
+        diagnostics.extend(self.remote_function_global_diagnostics(file, document));
+        diagnostics.extend(self.callback_signature_diagnostics(file, document));
         diagnostics.sort_by(|left, right| {
             left.range
                 .start
@@ -246,6 +281,146 @@ where
         diagnostics
     }
 
+    fn remote_function_global_diagnostics(
+        &self,
+        file: &I,
+        document: &SemanticDocument,
+    ) -> Vec<Diagnostic> {
+        let mut diagnostics = Vec::new();
+        for call in &document.calls {
+            let ValueSource::Workspace(callee) = &call.callable else {
+                continue;
+            };
+            let (target_index, destination) = match callee.as_str() {
+                "Remote_CallFunction_NonReplay" | "Remote_CallFunction_Replay" => {
+                    (1, VmTargets::CLIENT)
+                }
+                "Remote_CallFunction_UI" => (1, VmTargets::UI),
+                "RunUIScript" => (0, VmTargets::UI),
+                "RunClientScript" => (0, VmTargets::CLIENT),
+                _ => continue,
+            };
+            let Some(argument) = call.arguments.get(target_index) else {
+                continue;
+            };
+            let Some(target) = document.string_argument(argument) else {
+                continue;
+            };
+            let declarations = self
+                .named_declarations(target, Some(file), Some(document), true)
+                .into_iter()
+                .filter(|(declaration_file, declaration)| {
+                    declaration.kind == DeclarationKind::Function
+                        && self
+                            .file_targets(declaration_file)
+                            .intersection(declaration.targets)
+                            .compatible_with(destination)
+                })
+                .collect::<Vec<_>>();
+            if !declarations.is_empty()
+                && declarations
+                    .iter()
+                    .all(|(_, declaration)| !declaration.is_global)
+            {
+                diagnostics.push(diagnostic(
+                    argument.range.clone(),
+                    REMOTE_FUNCTION_NOT_GLOBAL_RULE,
+                    format!("cross-VM target `{target}` must be declared global"),
+                ));
+            }
+        }
+        diagnostics
+    }
+
+    fn callback_signature_diagnostics(
+        &self,
+        file: &I,
+        document: &SemanticDocument,
+    ) -> Vec<Diagnostic> {
+        let mut diagnostics = Vec::new();
+        for call in &document.calls {
+            let ValueSource::Workspace(callee) = &call.callable else {
+                continue;
+            };
+            let Some(contract) = callback_contract(callee) else {
+                continue;
+            };
+            let Some(argument) = call.arguments.get(contract.argument) else {
+                continue;
+            };
+            let signatures =
+                self.callable_signatures_with_document(file, document, &argument.source);
+            if signatures.is_empty()
+                || signatures.iter().any(|signature| {
+                    accepts_arguments(signature, contract.parameters)
+                        && signature_return_type(signature)
+                            .is_none_or(|actual| actual == contract.return_type)
+                        && self.callback_parameter_types_match(
+                            file,
+                            document,
+                            signature,
+                            contract.parameter_types,
+                        )
+                })
+            {
+                continue;
+            }
+            diagnostics.push(diagnostic(
+                argument.range.clone(),
+                CALLBACK_SIGNATURE_MISMATCH_RULE,
+                format!(
+                    "callback for `{callee}` must be a {} function with {} arguments",
+                    contract.return_type, contract.parameters
+                ),
+            ));
+        }
+        diagnostics
+    }
+
+    fn file_targets(&self, file: &I) -> VmTargets {
+        self.file_indices
+            .get(file)
+            .map_or(VmTargets::ALL, |index| self.files[*index].targets)
+    }
+
+    fn callback_parameter_types_match(
+        &self,
+        file: &I,
+        document: &SemanticDocument,
+        signature: &OwnedSignature,
+        expected: &[&str],
+    ) -> bool {
+        signature
+            .parameters
+            .iter()
+            .filter(|parameter| !parameter.variadic)
+            .zip(expected)
+            .all(|(actual, expected)| {
+                let Some(identity) = &actual.type_identity else {
+                    return true;
+                };
+                let TypeIdentity::Nominal(actual_name) = identity else {
+                    return false;
+                };
+                let expected_base = expected.split_once('<').map_or(*expected, |(base, _)| base);
+                if actual_name == expected_base
+                    && actual.label.starts_with(&format!("{actual_name}<"))
+                {
+                    return actual.label == *expected
+                        || actual.label.starts_with(&format!("{expected} "));
+                }
+                matches!(
+                    self.resolve_type_identity_with_override(
+                        file,
+                        identity,
+                        Some(file),
+                        Some(document),
+                    ),
+                    Some(ResolvedType::Nominal(resolved)) if resolved == expected_base
+                )
+            })
+    }
+
     fn mismatch(
         &self,
         file: &I,
@@ -407,19 +582,18 @@ where
         override_document: Option<&SemanticDocument>,
         offset: Option<usize>,
     ) -> Vec<SemanticMember<I>> {
-        self.files
-            .iter()
-            .filter(|file| {
-                !matches!(owner, ResolvedType::Structural { file: owner_file, .. } if owner_file != &file.id)
-            })
-            .flat_map(|file| {
-                let document = self.document_with_override(
-                    &file.id,
-                    override_file,
-                    override_document,
-                );
+        self.owner_file_indices(owner, override_file, override_document)
+            .into_iter()
+            .flat_map(|index| {
+                let file = &self.files[index];
+                let document =
+                    self.document_with_override(&file.id, override_file, override_document);
                 owner_identity(&file.id, owner)
-                    .map(|identity| document.declarations_owned_by(&identity).collect::<Vec<_>>())
+                    .map(|identity| {
+                        document
+                            .declarations_owned_by(&identity)
+                            .collect::<Vec<_>>()
+                    })
                     .unwrap_or_default()
                     .into_iter()
                     .filter(move |declaration| {
@@ -441,6 +615,35 @@ where
                     })
             })
             .collect()
+    }
+
+    fn owner_file_indices(
+        &self,
+        owner: &ResolvedType<I>,
+        override_file: Option<&I>,
+        override_document: Option<&SemanticDocument>,
+    ) -> Vec<usize> {
+        let mut indices = match owner {
+            ResolvedType::Nominal(name) => self
+                .nominal_owner_files
+                .get(name)
+                .cloned()
+                .unwrap_or_default(),
+            ResolvedType::Structural { file, .. } => {
+                self.file_indices.get(file).copied().into_iter().collect()
+            }
+            ResolvedType::Augmented { .. } => Vec::new(),
+        };
+        if let (Some(file), Some(document)) = (override_file, override_document)
+            && let Some(index) = self.file_indices.get(file).copied()
+            && !indices.contains(&index)
+            && owner_identity(file, owner)
+                .is_some_and(|identity| document.declarations_owned_by(&identity).next().is_some())
+        {
+            indices.push(index);
+            indices.sort_unstable();
+        }
+        indices
     }
 
     fn resolve_value_owner_in(
@@ -970,9 +1173,23 @@ where
         override_document: Option<&SemanticDocument>,
         include_file_local: bool,
     ) -> Vec<(I, OwnedDeclaration)> {
-        self.files
-            .iter()
-            .flat_map(|file| {
+        let mut indices = self
+            .declaration_files
+            .get(name)
+            .cloned()
+            .unwrap_or_default();
+        if let (Some(file), Some(document)) = (override_file, override_document)
+            && document.declarations_named(name).next().is_some()
+            && let Some(index) = self.file_indices.get(file).copied()
+            && !indices.contains(&index)
+        {
+            indices.push(index);
+            indices.sort_unstable();
+        }
+        indices
+            .into_iter()
+            .flat_map(|index| {
+                let file = &self.files[index];
                 self.document_with_override(&file.id, override_file, override_document)
                     .declarations_named(name)
                     .filter(move |declaration| {
@@ -996,12 +1213,10 @@ where
     ) -> Vec<(I, OwnedDeclaration)> {
         for owner in self.resolved_owner_chain(owner, override_file, override_document) {
             let declarations = self
-                .files
-                .iter()
-                .filter(|file| {
-                    !matches!(&owner, ResolvedType::Structural { file: owner_file, .. } if owner_file != &file.id)
-                })
-                .flat_map(|file| {
+                .owner_file_indices(&owner, override_file, override_document)
+                .into_iter()
+                .flat_map(|index| {
+                    let file = &self.files[index];
                     self.document_with_override(&file.id, override_file, override_document)
                         .declarations
                         .iter()
@@ -1020,10 +1235,9 @@ where
     }
 
     fn document(&self, file: &I) -> Option<&'a SemanticDocument> {
-        self.files
-            .iter()
-            .find(|candidate| &candidate.id == file)
-            .map(|candidate| candidate.document)
+        self.file_indices
+            .get(file)
+            .map(|index| self.files[*index].document)
     }
 
     fn document_with_override<'b>(
@@ -1037,12 +1251,88 @@ where
         {
             return document;
         }
-        self.files
-            .iter()
-            .find(|candidate| &candidate.id == file)
-            .expect("semantic file disappeared")
-            .document
+        self.files[*self
+            .file_indices
+            .get(file)
+            .expect("semantic file disappeared")]
+        .document
     }
+}
+
+#[derive(Clone, Copy)]
+struct CallbackContract {
+    argument: usize,
+    parameters: usize,
+    return_type: &'static str,
+    parameter_types: &'static [&'static str],
+}
+
+fn callback_contract(name: &str) -> Option<CallbackContract> {
+    let contract = match name {
+        "AddCallback_OnRegisteringCustomNetworkVars"
+        | "AddCallback_OnRegisterCustomItems"
+        | "AddCallback_OnCustomGamemodesInit" => CallbackContract {
+            argument: 0,
+            parameters: 0,
+            return_type: "void",
+            parameter_types: &[],
+        },
+        "AddServerToClientStringCommandCallback" => CallbackContract {
+            argument: 1,
+            parameters: 1,
+            return_type: "void",
+            parameter_types: &["array<string>"],
+        },
+        "AddClientCommandCallback" => CallbackContract {
+            argument: 1,
+            parameters: 2,
+            return_type: "bool",
+            parameter_types: &["entity", "array<string>"],
+        },
+        "AddClientCommandNotifyCallback" => CallbackContract {
+            argument: 1,
+            parameters: 2,
+            return_type: "void",
+            parameter_types: &["entity", "array<string>"],
+        },
+        "AddCallback_OnPlayerRespawned"
+        | "AddCallback_OnClientConnecting"
+        | "AddCallback_OnClientConnected"
+        | "AddCallback_OnClientDisconnected"
+        | "AddCallback_OnPlayerInventoryChanged" => CallbackContract {
+            argument: 0,
+            parameters: 1,
+            return_type: "void",
+            parameter_types: &["entity"],
+        },
+        "AddCallback_OnPlayerKilled" | "AddCallback_OnNPCKilled" => CallbackContract {
+            argument: 0,
+            parameters: 3,
+            return_type: "void",
+            parameter_types: &["entity", "entity", "var"],
+        },
+        "AddCallback_OnTitanDoomed" => CallbackContract {
+            argument: 0,
+            parameters: 2,
+            return_type: "void",
+            parameter_types: &["entity", "var"],
+        },
+        "AddCallback_OnTouchHealthKit" => CallbackContract {
+            argument: 1,
+            parameters: 2,
+            return_type: "bool",
+            parameter_types: &["entity", "entity"],
+        },
+        _ => return None,
+    };
+    Some(contract)
+}
+
+fn signature_return_type(signature: &OwnedSignature) -> Option<&str> {
+    signature
+        .label
+        .split_once(" function")
+        .map(|(return_type, _)| return_type)
 }
 
 fn diagnostic(range: Range<usize>, rule: &'static str, message: String) -> Diagnostic {
@@ -1225,6 +1515,170 @@ mod tests {
         assert_diagnostics(
             "class Expected {} class Actual {} void function Take(Expected value) {} void function Example() { Take(Actual()) }",
             &[(ARGUMENT_TYPE_RULE, "Actual()")],
+        );
+    }
+
+    #[test]
+    fn reports_remote_function_target_that_is_not_global() {
+        assert_diagnostics(
+            r#"
+void function ClientTarget( int value ) {}
+void function Send( entity player ) {
+	Remote_CallFunction_NonReplay( player, "ClientTarget", 1 )
+}
+"#,
+            &[(REMOTE_FUNCTION_NOT_GLOBAL_RULE, "\"ClientTarget\"")],
+        );
+    }
+
+    #[test]
+    fn accepts_global_remote_function_target() {
+        assert_diagnostics(
+            r#"
+global function ClientTarget
+void function ClientTarget( int value ) {}
+void function Send( entity player ) {
+	Remote_CallFunction_NonReplay( player, "ClientTarget", 1 )
+}
+"#,
+            &[],
+        );
+    }
+
+    #[test]
+    fn reports_callback_signature_mismatch() {
+        assert_diagnostics(
+            r#"
+void function HandleCommand( entity player ) {}
+void function Init() {
+	AddClientCommandCallback( "example", HandleCommand )
+}
+"#,
+            &[(CALLBACK_SIGNATURE_MISMATCH_RULE, "HandleCommand")],
+        );
+    }
+
+    #[test]
+    fn accepts_matching_callback_signature() {
+        assert_diagnostics(
+            r#"
+bool function HandleCommand( entity player, array<string> args ) { return true }
+void function Init() {
+	AddClientCommandCallback( "example", HandleCommand )
+}
+"#,
+            &[],
+        );
+    }
+
+    #[test]
+    fn reports_callback_return_type_mismatch() {
+        assert_diagnostics(
+            r#"
+void function HandleCommand( entity player, array<string> args ) {}
+void function Init() {
+	AddClientCommandCallback( "example", HandleCommand )
+}
+"#,
+            &[(CALLBACK_SIGNATURE_MISMATCH_RULE, "HandleCommand")],
+        );
+    }
+
+    #[test]
+    fn reports_callback_parameter_type_mismatch() {
+        assert_diagnostics(
+            r#"
+bool function HandleCommand( string player, int args ) { return true }
+void function Init() {
+	AddClientCommandCallback( "example", HandleCommand )
+}
+"#,
+            &[(CALLBACK_SIGNATURE_MISMATCH_RULE, "HandleCommand")],
+        );
+    }
+
+    #[test]
+    fn reports_callback_generic_element_type_mismatch() {
+        assert_diagnostics(
+            r#"
+bool function HandleCommand( entity player, array<int> args ) { return true }
+void function Init() {
+	AddClientCommandCallback( "example", HandleCommand )
+}
+"#,
+            &[(CALLBACK_SIGNATURE_MISMATCH_RULE, "HandleCommand")],
+        );
+    }
+
+    #[test]
+    fn accepts_callback_parameter_typedef() {
+        assert_diagnostics(
+            r#"
+typedef PlayerEntity entity
+bool function HandleCommand( PlayerEntity player, array<string> args ) { return true }
+void function Init() {
+	AddClientCommandCallback( "example", HandleCommand )
+}
+"#,
+            &[],
+        );
+    }
+
+    #[test]
+    fn resolves_global_remote_target_across_vm_files() {
+        let target_source = "global function ClientTarget\nvoid function ClientTarget() {}";
+        let caller_source = "void function Send(entity player) { Remote_CallFunction_NonReplay(player, \"ClientTarget\") }";
+        let target = crate::semantic::analyze(target_source);
+        let caller = crate::semantic::analyze(caller_source);
+        let workspace = SemanticWorkspace::new([
+            SemanticFile {
+                id: "target.gnut",
+                document: &target,
+                targets: VmTargets::CLIENT,
+            },
+            SemanticFile {
+                id: "caller.gnut",
+                document: &caller,
+                targets: VmTargets::SERVER,
+            },
+        ]);
+
+        assert!(workspace.diagnostics(&"caller.gnut").is_empty());
+    }
+
+    #[test]
+    fn ignores_non_global_remote_target_in_incompatible_vm() {
+        let target_source = "void function ClientTarget() {}";
+        let caller_source = "void function Send(entity player) { Remote_CallFunction_NonReplay(player, \"ClientTarget\") }";
+        let target = crate::semantic::analyze(target_source);
+        let caller = crate::semantic::analyze(caller_source);
+        let workspace = SemanticWorkspace::new([
+            SemanticFile {
+                id: "target.gnut",
+                document: &target,
+                targets: VmTargets::UI,
+            },
+            SemanticFile {
+                id: "caller.gnut",
+                document: &caller,
+                targets: VmTargets::SERVER,
+            },
+        ]);
+
+        assert!(workspace.diagnostics(&"caller.gnut").is_empty());
+    }
+
+    #[test]
+    fn accepts_globalize_all_functions_remote_target() {
+        assert_diagnostics(
+            r#"
+globalize_all_functions
+void function ClientTarget() {}
+void function Send( entity player ) {
+	RunClientScript( "ClientTarget" )
+}
+"#,
+            &[],
         );
     }
 }

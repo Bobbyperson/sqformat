@@ -11,6 +11,9 @@ use tower_lsp_server::ls_types::{
     WorkspaceFolder, WorkspaceSymbol,
 };
 
+const MAX_WORKSPACE_DIAGNOSTICS: usize = 500;
+const MAX_LINT_DIAGNOSTICS: usize = 100;
+
 #[derive(Clone, Debug)]
 pub struct WorkspaceOccurrence {
     pub uri: Uri,
@@ -40,7 +43,7 @@ pub struct WorkspaceMember {
 
 pub type ResolvedType = sqfmt_lint::ResolvedType<Uri>;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct IndexedFile {
     source: String,
     symbols: Vec<OwnedDocumentSymbol>,
@@ -77,7 +80,7 @@ impl IndexedFile {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct WorkspaceIndex {
     folders: Vec<WorkspaceFolder>,
     api_source_roots: Vec<PathBuf>,
@@ -100,19 +103,30 @@ impl WorkspaceIndex {
         }))
     }
 
-    pub fn duplicate_declaration_diagnostics(
+    /// Runs the semantic rule set once for an open document and attaches duplicate locations.
+    pub fn semantic_diagnostics(
         &self,
         uri: &Uri,
         source: &str,
         semantic: &SemanticDocument,
+        options: &sqfmt_lint::LintOptions,
     ) -> Vec<Diagnostic> {
-        let mut diagnostics = self.semantic_rule_diagnostics(
-            uri,
-            source,
-            semantic,
-            sqfmt_lint::DUPLICATE_DECLARATION_RULE,
-        );
+        let mut raw = self
+            .semantic_workspace()
+            .diagnostics_with_document(uri, semantic);
+        raw.retain(|diagnostic| options.enables(diagnostic.rule));
+        if let Some(file) = self.files.get(uri) {
+            file.lint.retain_unsuppressed(&mut raw);
+        }
+        let mut diagnostics = lint_diagnostics(source, raw);
         for diagnostic in &mut diagnostics {
+            if diagnostic.code
+                != Some(NumberOrString::String(
+                    sqfmt_lint::DUPLICATE_DECLARATION_RULE.to_string(),
+                ))
+            {
+                continue;
+            }
             if let Some(duplicate) = semantic
                 .duplicates
                 .iter()
@@ -130,23 +144,21 @@ impl WorkspaceIndex {
         diagnostics
     }
 
-    fn semantic_rule_diagnostics(
+    pub fn lint_diagnostics(&self, uri: &Uri, options: sqfmt_lint::LintOptions) -> Vec<Diagnostic> {
+        let Some(file) = self.files.get(uri) else {
+            return Vec::new();
+        };
+        let workspace = sqfmt_lint::Workspace::new(self.files.values().map(|file| &file.lint));
+        lint_diagnostics_for(file, &workspace, options)
+    }
+
+    pub fn lint_options(
         &self,
         uri: &Uri,
-        source: &str,
-        semantic: &SemanticDocument,
-        rule: &str,
-    ) -> Vec<Diagnostic> {
-        let mut diagnostics = self
-            .semantic_workspace()
-            .diagnostics_with_document(uri, semantic)
-            .into_iter()
-            .filter(|diagnostic| diagnostic.rule == rule)
-            .collect::<Vec<_>>();
-        if let Some(file) = self.files.get(uri) {
-            file.lint.retain_unsuppressed(&mut diagnostics);
-        }
-        lint_diagnostics(source, diagnostics)
+        advisory_lints: bool,
+        config_file: Option<&Path>,
+    ) -> sqfmt_lint::LintOptions {
+        configured_lint_options(uri, advisory_lints, config_file, &mut HashMap::new())
     }
 
     fn indexed_semantic_diagnostics(
@@ -154,8 +166,10 @@ impl WorkspaceIndex {
         uri: &Uri,
         file: &IndexedFile,
         workspace: &sqfmt_lint::SemanticWorkspace<'_, Uri>,
+        options: &sqfmt_lint::LintOptions,
     ) -> Vec<Diagnostic> {
         let mut diagnostics = workspace.diagnostics(uri);
+        diagnostics.retain(|diagnostic| options.enables(diagnostic.rule));
         file.lint.retain_unsuppressed(&mut diagnostics);
         let mut diagnostics = lint_diagnostics(&file.source, diagnostics);
         for diagnostic in &mut diagnostics {
@@ -249,23 +263,27 @@ impl WorkspaceIndex {
     pub fn lint_diagnostic_publications(
         &self,
         advisory_lints: bool,
+        config_file: Option<&Path>,
         open_files: &HashSet<Uri>,
     ) -> Vec<(Uri, Vec<Diagnostic>)> {
         let workspace = sqfmt_lint::Workspace::new(self.files.values().map(|file| &file.lint));
         let semantic_workspace = self.semantic_workspace();
+        let mut configs = HashMap::new();
         let mut publications = self
             .files
             .iter()
             .filter(|(uri, _)| !self.api_files.contains(*uri))
+            .filter(|(uri, _)| !open_files.contains(*uri))
             .filter_map(|(uri, file)| {
-                let mut diagnostics = lint_diagnostics_for(file, &workspace, advisory_lints);
-                if !open_files.contains(uri) {
-                    diagnostics.extend(self.indexed_semantic_diagnostics(
-                        uri,
-                        file,
-                        &semantic_workspace,
-                    ));
-                }
+                let options =
+                    configured_lint_options(uri, advisory_lints, config_file, &mut configs);
+                let mut diagnostics = lint_diagnostics_for(file, &workspace, options.clone());
+                diagnostics.truncate(MAX_LINT_DIAGNOSTICS);
+                diagnostics.extend(
+                    self.indexed_semantic_diagnostics(uri, file, &semantic_workspace, &options)
+                        .into_iter()
+                        .take(MAX_WORKSPACE_DIAGNOSTICS),
+                );
                 (!diagnostics.is_empty()).then(|| (uri.clone(), diagnostics))
             })
             .collect::<Vec<_>>();
@@ -274,8 +292,15 @@ impl WorkspaceIndex {
                 .iter()
                 .filter(|(uri, _)| !self.api_manifests.contains(*uri))
                 .filter_map(|(uri, source)| {
-                    let diagnostics =
-                        lint_diagnostics(source, workspace.manifest_diagnostics(source));
+                    let options =
+                        configured_lint_options(uri, advisory_lints, config_file, &mut configs);
+                    let diagnostics = workspace
+                        .manifest_diagnostics(source)
+                        .into_iter()
+                        .filter(|diagnostic| options.enables(diagnostic.rule))
+                        .collect();
+                    let mut diagnostics = lint_diagnostics(source, diagnostics);
+                    diagnostics.truncate(MAX_LINT_DIAGNOSTICS);
                     (!diagnostics.is_empty()).then(|| (uri.clone(), diagnostics))
                 }),
         );
@@ -626,72 +651,6 @@ impl WorkspaceIndex {
             .collect()
     }
 
-    /// Member accesses whose owner is a fully known type that declares no such member.
-    ///
-    /// Absence only proves anything when the member list is complete, so this reports a name only
-    /// when every link of the owner's chain is a `struct` or `class` declared in the workspace.
-    /// Native types such as `entity`, tables, and per-instance slots stay silent.
-    pub fn invalid_member_diagnostics(
-        &self,
-        uri: &Uri,
-        source: &str,
-        semantic: &SemanticDocument,
-    ) -> Vec<Diagnostic> {
-        self.semantic_rule_diagnostics(uri, source, semantic, sqfmt_lint::INVALID_MEMBER_RULE)
-    }
-
-    /// Calls that pass a number of arguments no declaration of their callee accepts.
-    ///
-    /// Squirrel rejects a wrong argument count at run time, so this is a real defect, but only when
-    /// the parameter list is known exactly. A call whose callee resolves to nothing, to a value with
-    /// no signature, or to a class that may inherit a constructor from outside the workspace is left
-    /// alone, which is most calls in a mod repository.
-    pub fn call_arity_diagnostics(
-        &self,
-        uri: &Uri,
-        source: &str,
-        semantic: &SemanticDocument,
-    ) -> Vec<Diagnostic> {
-        self.semantic_rule_diagnostics(uri, source, semantic, sqfmt_lint::CALL_ARITY_RULE)
-    }
-
-    /// Arguments whose known nominal type no viable declaration of the callee accepts.
-    pub fn call_argument_type_diagnostics(
-        &self,
-        uri: &Uri,
-        source: &str,
-        semantic: &SemanticDocument,
-    ) -> Vec<Diagnostic> {
-        self.semantic_rule_diagnostics(uri, source, semantic, sqfmt_lint::ARGUMENT_TYPE_RULE)
-    }
-
-    /// Initializers and `return` values whose type contradicts a declared one.
-    ///
-    /// Only nominal types both sides fully declare are compared. A declared type resolves through
-    /// typedef aliases, and a value satisfies it when the declared name appears anywhere in the
-    /// value's own base chain, so passing a subclass where a base is declared stays silent.
-    pub fn type_mismatch_diagnostics(
-        &self,
-        uri: &Uri,
-        source: &str,
-        semantic: &SemanticDocument,
-    ) -> Vec<Diagnostic> {
-        let rules = [
-            sqfmt_lint::INITIALIZER_TYPE_RULE,
-            sqfmt_lint::RETURN_TYPE_RULE,
-        ];
-        let mut diagnostics = self
-            .semantic_workspace()
-            .diagnostics_with_document(uri, semantic)
-            .into_iter()
-            .filter(|diagnostic| rules.contains(&diagnostic.rule))
-            .collect::<Vec<_>>();
-        if let Some(file) = self.files.get(uri) {
-            file.lint.retain_unsuppressed(&mut diagnostics);
-        }
-        lint_diagnostics(source, diagnostics)
-    }
-
     pub fn member_owner_for_type(&self, owner: &ResolvedType, name: &str) -> Option<ResolvedType> {
         self.semantic_workspace().member_owner_for_type(owner, name)
     }
@@ -876,17 +835,39 @@ fn declaration_owner_matches(
 fn lint_diagnostics_for(
     file: &IndexedFile,
     workspace: &sqfmt_lint::Workspace,
-    advisory_lints: bool,
+    options: sqfmt_lint::LintOptions,
 ) -> Vec<Diagnostic> {
     lint_diagnostics(
         &file.source,
-        workspace.diagnostics_with_options(
-            &file.lint,
-            sqfmt_lint::LintOptions {
-                advisory: advisory_lints,
-            },
-        ),
+        workspace.diagnostics_with_options(&file.lint, options),
     )
+}
+
+fn configured_lint_options(
+    uri: &Uri,
+    advisory_lints: bool,
+    config_file: Option<&Path>,
+    configs: &mut HashMap<Option<PathBuf>, sqfmt_lib::config::LintConfig>,
+) -> sqfmt_lint::LintOptions {
+    let path = config_file.map(Path::to_path_buf).or_else(|| {
+        uri.to_file_path()
+            .and_then(|path| path.parent().map(Path::to_path_buf))
+            .and_then(|directory| sqfmt_lib::config::find(&directory))
+    });
+    let configured = configs
+        .entry(path.clone())
+        .or_insert_with(|| {
+            path.and_then(|path| sqfmt_lib::config::FileConfig::read(&path).ok())
+                .map(|config| config.lint)
+                .unwrap_or_default()
+        })
+        .clone();
+    sqfmt_lint::LintOptions {
+        advisory: advisory_lints,
+        select: configured.select.map(|rules| rules.into_iter().collect()),
+        extend_select: configured.extend_select.into_iter().collect(),
+        extend_ignore: configured.extend_ignore.into_iter().collect(),
+    }
 }
 
 fn lint_diagnostics(source: &str, diagnostics: Vec<sqfmt_lint::Diagnostic>) -> Vec<Diagnostic> {

@@ -56,6 +56,16 @@ impl Format {
     }
 }
 
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct LintConfig {
+    pub select: Option<Vec<String>>,
+    #[serde(default)]
+    pub extend_select: Vec<String>,
+    #[serde(default)]
+    pub extend_ignore: Vec<String>,
+}
+
 /// A `.sqformat.toml` file. Every setting is optional, so an absent one keeps its default.
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -68,6 +78,8 @@ pub struct FileConfig {
     pub array_multiline_commas: Option<bool>,
     pub array_multiline_trailing_commas: Option<bool>,
     pub array_singleline_trailing_commas: Option<bool>,
+    #[serde(default)]
+    pub lint: LintConfig,
 }
 
 impl FileConfig {
@@ -206,5 +218,20 @@ mod tests {
 
         assert_eq!(format.column_limit, 100);
         std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn reads_lint_rule_selection() {
+        let config: FileConfig = toml::from_str(
+            "[lint]\nselect = [\"wait-zero\"]\nextend-select = [\"entity-use-after-yield\"]\nextend-ignore = [\"wait-zero\"]\n",
+        )
+        .expect("valid config");
+
+        assert_eq!(
+            config.lint.select.as_deref(),
+            Some(["wait-zero".to_string()].as_slice())
+        );
+        assert_eq!(config.lint.extend_select, ["entity-use-after-yield"]);
+        assert_eq!(config.lint.extend_ignore, ["wait-zero"]);
     }
 }

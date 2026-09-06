@@ -65,13 +65,13 @@ sqformat --lint --advisory-lints
 sqformat --help
 ```
 
-Lint rules cover threaded loops without suspension, zero-duration waits, entity validity across decoded handles, unchecked array indexes, `find()` in boolean contexts, unregistered signals, remote-function argument contracts, and unresolved Northstar manifest callbacks. `--advisory-lints` additionally checks entity use after a suspension point and threads spawned repeatedly from polling loops; these are opt-in because programmer-known lifetime or scheduling guarantees can make them intentional.
+Lint rules cover unreachable statements, empty `else` branches, duplicate switch cases, no-effect expressions, threaded loops without suspension, zero-duration waits, entity validity across decoded handles, unchecked array indexes, `find()` in boolean contexts, unregistered signals, remote-function argument contracts, and unresolved Northstar manifest callbacks. `--advisory-lints` additionally checks entity use after a suspension point and threads spawned repeatedly from polling loops; these are opt-in because programmer-known lifetime or scheduling guarantees can make them intentional.
 
 Lint diagnostics are written to stderr. The command exits with status 1 for lint findings, unreadable inputs, or parse failures.
 
 ## Configuration
 
-The formatter searches the current directory and its parents for `.sqformat.toml`. Use `--config <path>` to select a file explicitly. Command-line formatting options override file settings.
+The formatter and linter search the current directory and its parents for `.sqformat.toml`. Use `--config <path>` to select a file explicitly. Command-line formatting options override file settings.
 
 ```toml
 column_limit = 160
@@ -83,6 +83,10 @@ array_spaces = true
 array_multiline_commas = true
 array_multiline_trailing_commas = false
 array_singleline_trailing_commas = false
+
+[lint]
+select = ["ALL"]
+extend-ignore = ["wait-zero"]
 ```
 
 See [Formatting style and configuration](docs/formatting.md) for the resulting layout rules and `sqformat --help` for all command-line overrides.

@@ -10,5 +10,5 @@ serde_json = "1"
 sqfmt-lib = { path = "../sqfmt-lib" }
 sqfmt-lint = { path = "../sqfmt-lint" }
 sqparse = { git = "https://github.com/Bobbyperson/sqparse.git", tag = "v0.5.0" }
-tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "sync", "time"] }
 tower-lsp-server = "0.23"

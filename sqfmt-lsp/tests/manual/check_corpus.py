@@ -188,6 +188,15 @@ def check_warnings_over_the_corpus(server, corpus):
         "remote-function-contract-mismatch",
         "thread-spawned-inside-polling-loop",
         "find-used-as-boolean",
+        "invalid-remote-argument-type",
+        "remote-function-not-global",
+        "callback-signature-mismatch",
+        "invalid-http-request-options",
+        "unsafe-file-size-query",
+        "empty-else",
+        "unreachable-code",
+        "duplicate-switch-case",
+        "no-effect-expression",
     }
     scripts = []
     for directory, _, names in os.walk(corpus):

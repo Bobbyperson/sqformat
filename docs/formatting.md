@@ -16,6 +16,9 @@ array_multiline_trailing_commas = false
 array_singleline_trailing_commas = false
 ```
 
+The file can also contain a `[lint]` rule-selection table; see the
+[linter documentation](linter.md#rule-selection).
+
 Run `sqformat --help` for the corresponding command-line options.
 
 ---

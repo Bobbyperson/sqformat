@@ -107,6 +107,25 @@ fn lint_output_includes_each_rule_id_once() {
 }
 
 #[test]
+fn config_extends_and_ignores_lint_rules() {
+    let fixture = TempFixture::new();
+    fixture.write(
+        ".sqformat.toml",
+        "[lint]\nextend-select = [\"thread-spawned-inside-polling-loop\"]\nextend-ignore = [\"wait-zero\"]\n",
+    );
+    fixture.write(
+        "rules.gnut",
+        "void function Poll() { wait 0; while ( true ) { thread Update(); WaitFrame() } }",
+    );
+
+    let output = fixture.run(&["--lint", "--github-actions", "--quiet", "rules.gnut"]);
+    let output = stdout(&output);
+
+    assert!(output.contains("title=thread-spawned-inside-polling-loop"));
+    assert!(!output.contains("title=wait-zero"));
+}
+
+#[test]
 fn nonexistent_directory_reports_a_read_error_and_fails() {
     let fixture = TempFixture::new();
     let missing_directory = fixture

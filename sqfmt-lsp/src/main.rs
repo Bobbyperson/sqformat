@@ -1,7 +1,8 @@
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
-use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -20,13 +21,10 @@ mod workspace;
 
 use workspace::{IndexedFile, ResolvedType, WorkspaceIndex};
 
-/// Member checks are workspace-wide, so a badly resolved file could otherwise flood the client.
-const MAX_MEMBER_DIAGNOSTICS: usize = 100;
-const MAX_DUPLICATE_DIAGNOSTICS: usize = 100;
-const MAX_ARITY_DIAGNOSTICS: usize = 100;
-const MAX_ARGUMENT_TYPE_DIAGNOSTICS: usize = 100;
-const MAX_TYPE_DIAGNOSTICS: usize = 100;
+/// Workspace checks can cascade when a declaration is incomplete while the user is typing.
+const MAX_WORKSPACE_DIAGNOSTICS: usize = 500;
 const MAX_LINT_DIAGNOSTICS: usize = 100;
+const WORKSPACE_DIAGNOSTIC_DEBOUNCE: Duration = Duration::from_millis(300);
 
 #[derive(Debug)]
 struct Document {
@@ -43,14 +41,17 @@ struct Document {
 #[derive(Debug)]
 struct Backend {
     client: Client,
-    documents: RwLock<HashMap<Uri, Document>>,
-    workspace: RwLock<WorkspaceIndex>,
-    published_lint_files: RwLock<HashSet<Uri>>,
+    documents: Arc<RwLock<HashMap<Uri, Document>>>,
+    workspace: Arc<RwLock<WorkspaceIndex>>,
+    published_lint_files: Arc<RwLock<HashSet<Uri>>>,
     provide_formatting: AtomicBool,
     advisory_lints: AtomicBool,
     watch_files: AtomicBool,
     /// A config file the client named, used instead of discovering one.
     config_file: RwLock<Option<PathBuf>>,
+    workspace_diagnostic_generation: Arc<AtomicU64>,
+    workspace_diagnostics_running: Arc<AtomicBool>,
+    diagnostic_publication: Arc<tokio::sync::Mutex<()>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,13 +88,16 @@ impl Backend {
     fn new(client: Client) -> Self {
         Self {
             client,
-            documents: RwLock::new(HashMap::new()),
-            workspace: RwLock::new(WorkspaceIndex::default()),
-            published_lint_files: RwLock::new(HashSet::new()),
+            documents: Arc::new(RwLock::new(HashMap::new())),
+            workspace: Arc::new(RwLock::new(WorkspaceIndex::default())),
+            published_lint_files: Arc::new(RwLock::new(HashSet::new())),
             provide_formatting: AtomicBool::new(true),
             advisory_lints: AtomicBool::new(false),
             watch_files: AtomicBool::new(false),
             config_file: RwLock::new(None),
+            workspace_diagnostic_generation: Arc::new(AtomicU64::new(0)),
+            workspace_diagnostics_running: Arc::new(AtomicBool::new(false)),
+            diagnostic_publication: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -105,59 +109,37 @@ impl Backend {
         semantic: &SemanticDocument,
         local_diagnostics: &[Diagnostic],
         lint_diagnostics: &[Diagnostic],
+        lint_options: &sqfmt_lint::LintOptions,
     ) -> Vec<Diagnostic> {
         let mut diagnostics = local_diagnostics.to_vec();
         diagnostics.extend(
             workspace
-                .duplicate_declaration_diagnostics(uri, text, semantic)
+                .semantic_diagnostics(uri, text, semantic, lint_options)
                 .into_iter()
-                .take(MAX_DUPLICATE_DIAGNOSTICS),
-        );
-        diagnostics.extend(
-            workspace
-                .invalid_member_diagnostics(uri, text, semantic)
-                .into_iter()
-                .take(MAX_MEMBER_DIAGNOSTICS),
-        );
-        diagnostics.extend(
-            workspace
-                .call_arity_diagnostics(uri, text, semantic)
-                .into_iter()
-                .take(MAX_ARITY_DIAGNOSTICS),
-        );
-        diagnostics.extend(
-            workspace
-                .call_argument_type_diagnostics(uri, text, semantic)
-                .into_iter()
-                .take(MAX_ARGUMENT_TYPE_DIAGNOSTICS),
-        );
-        diagnostics.extend(
-            workspace
-                .type_mismatch_diagnostics(uri, text, semantic)
-                .into_iter()
-                .take(MAX_TYPE_DIAGNOSTICS),
+                .take(MAX_WORKSPACE_DIAGNOSTICS),
         );
         diagnostics.extend(lint_diagnostics.iter().take(MAX_LINT_DIAGNOSTICS).cloned());
         diagnostics
     }
 
-    async fn publish_all_diagnostics(&self) {
-        let (mut publications, current_lint_files, open_files) = {
+    async fn publish_open_diagnostics(&self) {
+        let config_file = self
+            .config_file
+            .read()
+            .expect("config lock poisoned")
+            .clone();
+        let publications = {
             let documents = self.documents.read().expect("document lock poisoned");
             let workspace = self.workspace.read().expect("workspace lock poisoned");
-            let open_files = documents.keys().cloned().collect::<HashSet<_>>();
-            let mut lint_publications = workspace
-                .lint_diagnostic_publications(
-                    self.advisory_lints.load(Ordering::Relaxed),
-                    &open_files,
-                )
-                .into_iter()
-                .collect::<HashMap<_, _>>();
-            let current_lint_files = lint_publications.keys().cloned().collect::<HashSet<_>>();
-            let mut publications = documents
+            documents
                 .iter()
                 .map(|(uri, document)| {
-                    let lint_diagnostics = lint_publications.remove(uri).unwrap_or_default();
+                    let lint_options = workspace.lint_options(
+                        uri,
+                        self.advisory_lints.load(Ordering::Relaxed),
+                        config_file.as_deref(),
+                    );
+                    let lint_diagnostics = workspace.lint_diagnostics(uri, lint_options.clone());
                     let diagnostics = if workspace.is_api_file(uri) {
                         Vec::new()
                     } else {
@@ -168,42 +150,121 @@ impl Backend {
                             &document.semantic,
                             &document.local_diagnostics,
                             &lint_diagnostics,
+                            &lint_options,
                         )
                     };
                     (uri.clone(), diagnostics, Some(document.version))
                 })
-                .collect::<Vec<_>>();
-            publications.extend(
-                lint_publications
-                    .into_iter()
-                    .map(|(uri, diagnostics)| (uri, diagnostics, None)),
-            );
-            (publications, current_lint_files, open_files)
+                .collect::<Vec<_>>()
         };
-        let stale_lint_files = {
-            let mut published = self
-                .published_lint_files
-                .write()
-                .expect("published lint lock poisoned");
-            let stale = published
-                .difference(&current_lint_files)
-                .filter(|uri| !open_files.contains(*uri))
-                .cloned()
-                .collect::<Vec<_>>();
-            *published = current_lint_files;
-            stale
-        };
-        publications.extend(
-            stale_lint_files
-                .into_iter()
-                .map(|uri| (uri, Vec::new(), None)),
-        );
-        publications.sort_by(|left, right| left.0.cmp(&right.0));
         for (uri, diagnostics, version) in publications {
+            let _publication = self.diagnostic_publication.lock().await;
             self.client
                 .publish_diagnostics(uri, diagnostics, version)
                 .await;
         }
+    }
+
+    fn schedule_workspace_diagnostics(&self) {
+        self.workspace_diagnostic_generation
+            .fetch_add(1, Ordering::AcqRel);
+        if self
+            .workspace_diagnostics_running
+            .swap(true, Ordering::AcqRel)
+        {
+            return;
+        }
+
+        let client = self.client.clone();
+        let documents = Arc::clone(&self.documents);
+        let workspace = Arc::clone(&self.workspace);
+        let published_lint_files = Arc::clone(&self.published_lint_files);
+        let generation = Arc::clone(&self.workspace_diagnostic_generation);
+        let running = Arc::clone(&self.workspace_diagnostics_running);
+        let diagnostic_publication = Arc::clone(&self.diagnostic_publication);
+        let advisory_lints = self.advisory_lints.load(Ordering::Relaxed);
+        let config_file = self
+            .config_file
+            .read()
+            .expect("config lock poisoned")
+            .clone();
+        tokio::spawn(async move {
+            let mut requested_generation = generation.load(Ordering::Acquire);
+            loop {
+                tokio::time::sleep(WORKSPACE_DIAGNOSTIC_DEBOUNCE).await;
+                let current_generation = generation.load(Ordering::Acquire);
+                if current_generation != requested_generation {
+                    requested_generation = current_generation;
+                    continue;
+                }
+                let open_files = documents
+                    .read()
+                    .expect("document lock poisoned")
+                    .keys()
+                    .cloned()
+                    .collect::<HashSet<_>>();
+                let workspace_snapshot = workspace.read().expect("workspace lock poisoned").clone();
+                let diagnostic_open_files = open_files.clone();
+                let diagnostic_config_file = config_file.clone();
+                let mut publications = tokio::task::spawn_blocking(move || {
+                    workspace_snapshot.lint_diagnostic_publications(
+                        advisory_lints,
+                        diagnostic_config_file.as_deref(),
+                        &diagnostic_open_files,
+                    )
+                })
+                .await
+                .expect("workspace diagnostics task panicked");
+
+                if generation.load(Ordering::Acquire) == requested_generation {
+                    let current_lint_files = publications
+                        .iter()
+                        .map(|(uri, _)| uri.clone())
+                        .collect::<HashSet<_>>();
+                    let stale_lint_files = {
+                        let mut published = published_lint_files
+                            .write()
+                            .expect("published lint lock poisoned");
+                        let stale = published
+                            .difference(&current_lint_files)
+                            .filter(|uri| !open_files.contains(*uri))
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        *published = current_lint_files;
+                        stale
+                    };
+                    publications.extend(stale_lint_files.into_iter().map(|uri| (uri, Vec::new())));
+                    publications.sort_by(|left, right| left.0.cmp(&right.0));
+                    for (uri, diagnostics) in publications {
+                        let _publication = diagnostic_publication.lock().await;
+                        if generation.load(Ordering::Acquire) != requested_generation {
+                            break;
+                        }
+                        if documents
+                            .read()
+                            .expect("document lock poisoned")
+                            .contains_key(&uri)
+                        {
+                            continue;
+                        }
+                        client.publish_diagnostics(uri, diagnostics, None).await;
+                    }
+                }
+
+                let current_generation = generation.load(Ordering::Acquire);
+                if current_generation != requested_generation {
+                    requested_generation = current_generation;
+                    continue;
+                }
+                running.store(false, Ordering::Release);
+                if generation.load(Ordering::Acquire) == requested_generation
+                    || running.swap(true, Ordering::AcqRel)
+                {
+                    break;
+                }
+                requested_generation = generation.load(Ordering::Acquire);
+            }
+        });
     }
 
     /// The settings for this document: the config file the client named, or the nearest
@@ -313,8 +374,15 @@ impl LanguageServer for Backend {
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 position_encoding: Some(PositionEncodingKind::UTF16),
-                text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    TextDocumentSyncKind::FULL,
+                text_document_sync: Some(TextDocumentSyncCapability::Options(
+                    TextDocumentSyncOptions {
+                        open_close: Some(true),
+                        change: Some(TextDocumentSyncKind::FULL),
+                        save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
+                            include_text: Some(true),
+                        })),
+                        ..Default::default()
+                    },
                 )),
                 document_formatting_provider: options
                     .provide_formatting
@@ -410,6 +478,10 @@ impl LanguageServer for Backend {
                             glob_pattern: GlobPattern::String("**/mod.json".to_string()),
                             kind: None,
                         },
+                        FileSystemWatcher {
+                            glob_pattern: GlobPattern::String("**/.sqformat.toml".to_string()),
+                            kind: None,
+                        },
                     ],
                 })
                 .ok(),
@@ -436,7 +508,8 @@ impl LanguageServer for Backend {
                 format!("sqformat language server initialized ({indexed} files indexed)"),
             )
             .await;
-        self.publish_all_diagnostics().await;
+        self.schedule_workspace_diagnostics();
+        self.publish_open_diagnostics().await;
     }
 
     async fn semantic_tokens_full(
@@ -492,7 +565,8 @@ impl LanguageServer for Backend {
             analysis.semantic,
             analysis.lint,
         );
-        self.publish_all_diagnostics().await;
+        self.schedule_workspace_diagnostics();
+        self.publish_open_diagnostics().await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -525,7 +599,46 @@ impl LanguageServer for Backend {
             analysis.semantic,
             analysis.lint,
         );
-        self.publish_all_diagnostics().await;
+        self.schedule_workspace_diagnostics();
+        self.publish_open_diagnostics().await;
+    }
+
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        if let Some(text) = params.text {
+            let uri = params.text_document.uri;
+            let version = self
+                .documents
+                .read()
+                .expect("document lock poisoned")
+                .get(&uri)
+                .map_or(0, |document| document.version);
+            let analysis = analyze_document(&text);
+            let local_diagnostics = analysis.diagnostics(&uri, &text);
+            self.documents
+                .write()
+                .expect("document lock poisoned")
+                .insert(
+                    uri.clone(),
+                    Document {
+                        text: text.clone(),
+                        symbols: analysis.symbols.clone(),
+                        semantic: analysis.semantic.clone(),
+                        lint: analysis.lint.clone(),
+                        lexical: analysis.lexical,
+                        local_diagnostics,
+                        version,
+                    },
+                );
+            self.index_open_document(
+                uri,
+                &text,
+                analysis.symbols,
+                analysis.semantic,
+                analysis.lint,
+            );
+        }
+        self.schedule_workspace_diagnostics();
+        self.publish_open_diagnostics().await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -535,8 +648,11 @@ impl LanguageServer for Backend {
             .expect("document lock poisoned")
             .remove(&uri);
         self.reload_disk_document(&uri);
+        self.schedule_workspace_diagnostics();
+        let _publication = self.diagnostic_publication.lock().await;
         self.client.publish_diagnostics(uri, Vec::new(), None).await;
-        self.publish_all_diagnostics().await;
+        drop(_publication);
+        self.publish_open_diagnostics().await;
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
@@ -1274,6 +1390,14 @@ impl LanguageServer for Backend {
                     manifests_changed = true;
                     continue;
                 }
+                if change
+                    .uri
+                    .path()
+                    .as_str()
+                    .ends_with(sqfmt_lib::config::CONFIG_FILE_NAME)
+                {
+                    continue;
+                }
                 if open_documents.contains(&change.uri) {
                     continue;
                 }
@@ -1288,7 +1412,8 @@ impl LanguageServer for Backend {
                 workspace.rescan_manifests();
             }
         }
-        self.publish_all_diagnostics().await;
+        self.schedule_workspace_diagnostics();
+        self.publish_open_diagnostics().await;
     }
 
     async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
@@ -1318,7 +1443,8 @@ impl LanguageServer for Backend {
                 workspace.insert(uri, document);
             }
         }
-        self.publish_all_diagnostics().await;
+        self.schedule_workspace_diagnostics();
+        self.publish_open_diagnostics().await;
     }
 }
 

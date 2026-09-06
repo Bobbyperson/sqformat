@@ -155,13 +155,8 @@ fn collect_lint_files(
 ///
 /// Discovery lives in `sqfmt_lib::config` so the language server finds the same file the same way.
 fn build_format(args: &Args) -> Format {
-    let file = match &args.config {
-        // A named config must exist; a discovered one is optional.
-        Some(path) => Some(exit_on_error(FileConfig::read(Path::new(path)))),
-        None => config::find(&std::env::current_dir().unwrap_or_default())
-            .map(|path| exit_on_error(FileConfig::read(&path))),
-    };
-    let mut format = exit_on_error(file.unwrap_or_default().apply(Format::default()));
+    let file = read_file_config(args);
+    let mut format = exit_on_error(file.apply(Format::default()));
     if let Some(column_limit) = args.column_limit {
         format.column_limit = column_limit;
     }
@@ -189,6 +184,17 @@ fn build_format(args: &Args) -> Format {
         format.array_singleline_trailing_commas = value;
     }
     format
+}
+
+fn read_file_config(args: &Args) -> FileConfig {
+    match &args.config {
+        // A named config must exist; a discovered one is optional.
+        Some(path) => exit_on_error(FileConfig::read(Path::new(path))),
+        None => config::find(&std::env::current_dir().unwrap_or_default())
+            .map_or_else(FileConfig::default, |path| {
+                exit_on_error(FileConfig::read(&path))
+            }),
+    }
 }
 
 fn exit_on_error<T>(result: Result<T, config::ConfigError>) -> T {
@@ -358,6 +364,7 @@ fn print_lint_error(github_actions: bool, file: &str, error: &str) {
 }
 
 fn run_lint(args: &Args) -> bool {
+    let config = read_file_config(args);
     let mut files = Vec::new();
     let mut manifests = Vec::new();
     let mut discovery_errors = Vec::new();
@@ -446,15 +453,21 @@ fn run_lint(args: &Args) -> bool {
                     .unwrap_or(sqfmt_lint::VmTargets::ALL),
             }),
     );
+    let lint_options = sqfmt_lint::LintOptions {
+        advisory: args.advisory_lints,
+        select: config.lint.select.map(|rules| rules.into_iter().collect()),
+        extend_select: config.lint.extend_select.into_iter().collect(),
+        extend_ignore: config.lint.extend_ignore.into_iter().collect(),
+    };
     let mut finding_count = 0;
     for ((file, source), analysis) in successful_files.iter().zip(&analyses) {
-        let mut diagnostics = workspace.diagnostics_with_options(
-            analysis,
-            sqfmt_lint::LintOptions {
-                advisory: args.advisory_lints,
-            },
+        let mut diagnostics = workspace.diagnostics_with_options(analysis, lint_options.clone());
+        diagnostics.extend(
+            semantic_workspace
+                .diagnostics(file)
+                .into_iter()
+                .filter(|diagnostic| lint_options.enables(diagnostic.rule)),
         );
-        diagnostics.extend(semantic_workspace.diagnostics(file));
         analysis.retain_unsuppressed(&mut diagnostics);
         diagnostics.sort_by(|left, right| {
             left.range
@@ -476,6 +489,9 @@ fn run_lint(args: &Args) -> bool {
             Ok(source) => {
                 manifest_count += 1;
                 for diagnostic in workspace.manifest_diagnostics(&source) {
+                    if !lint_options.enables(diagnostic.rule) {
+                        continue;
+                    }
                     print_lint_diagnostic(args.github_actions, &manifest, &source, &diagnostic);
                     finding_count += 1;
                 }

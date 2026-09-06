@@ -158,6 +158,7 @@ pub struct SemanticDocument {
     pub callables: HashMap<Range<usize>, OwnedSignature>,
     pub conditions: Vec<ConditionalSpan>,
     pub duplicates: Vec<OwnedDuplicate>,
+    string_arguments: HashMap<Range<usize>, String>,
     /// Indices into `declarations`, built once when analysis finishes. A workspace-wide lookup
     /// visits every indexed file, so scanning each file's declarations there is quadratic in the
     /// project; these turn the inner scan into a hash lookup.
@@ -229,6 +230,12 @@ impl SemanticDocument {
         self.declarations
             .iter()
             .find(|declaration| declaration.range == *range)
+    }
+
+    pub(crate) fn string_argument(&self, argument: &OwnedArgument) -> Option<&str> {
+        self.string_arguments
+            .get(&argument.range)
+            .map(String::as_str)
     }
 
     pub fn member_reference_at(&self, offset: usize) -> Option<&OwnedMemberReference> {
@@ -1633,9 +1640,18 @@ impl Analyzer {
                 let arguments = expression
                     .arguments
                     .iter()
-                    .map(|argument| OwnedArgument {
-                        range: expression_start(&argument.value)..expression_end(&argument.value),
-                        source: self.expression(&argument.value),
+                    .map(|argument| {
+                        let range =
+                            expression_start(&argument.value)..expression_end(&argument.value);
+                        if let Some(value) = expression_string_literal(&argument.value) {
+                            self.document
+                                .string_arguments
+                                .insert(range.clone(), value.to_string());
+                        }
+                        OwnedArgument {
+                            range,
+                            source: self.expression(&argument.value),
+                        }
                     })
                     .collect();
                 // A post-initializer adds per-instance slots to the called value, so it is analyzed
@@ -2152,7 +2168,7 @@ fn switch_case_start(case: &SwitchCase<'_>) -> usize {
     }
 }
 
-fn statement_type_start(statement: &StatementType<'_>) -> usize {
+pub(crate) fn statement_type_start(statement: &StatementType<'_>) -> usize {
     match statement {
         StatementType::Empty(statement) => statement.empty.map_or(0, |token| token.range.start),
         StatementType::Block(statement) => statement.open.range.start,
@@ -2193,7 +2209,7 @@ fn statement_type_start(statement: &StatementType<'_>) -> usize {
     }
 }
 
-fn statement_type_end(statement: &StatementType<'_>) -> usize {
+pub(crate) fn statement_type_end(statement: &StatementType<'_>) -> usize {
     match statement {
         StatementType::Empty(statement) => statement.empty.map_or(0, |token| token.range.end),
         StatementType::Block(statement) => statement.close.range.end,
@@ -2528,6 +2544,19 @@ fn functionref_signature(name: Option<&str>, type_: &Type<'_>) -> Option<OwnedSi
         ),
         parameters: params,
     })
+}
+
+fn expression_string_literal<'s>(expression: &Expression<'s>) -> Option<&'s str> {
+    match expression {
+        Expression::Parens(expression) => expression_string_literal(&expression.value),
+        Expression::Literal(expression) => match expression.literal {
+            LiteralToken::String(StringToken::Literal(value) | StringToken::Verbatim(value)) => {
+                Some(value)
+            }
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn function_parameters(params: &FunctionParams<'_>) -> Vec<OwnedParameter> {

@@ -39,7 +39,8 @@ An editor/client should:
 1. Start `sqformat-lsp` as a stdio process.
 2. Send `initialize` with a workspace folder (or the legacy `rootUri`).
 3. Send `initialized`, then normal document lifecycle notifications.
-4. Synchronize Squirrel documents with full text, not incremental ranges.
+4. Synchronize Squirrel documents with full text, not incremental ranges, and send save
+   notifications.
 
 Open the project directory rather than only one source file. The server scans
 workspace folders recursively for `.nut`, `.gnut`, and `mod.json`; unopened
@@ -96,7 +97,7 @@ running. It registers the CLI formatter only if server startup fails.
 
 The `initialize` response advertises:
 
-- UTF-16 positions and full text document synchronization.
+- UTF-16 positions, full text document synchronization, and save notifications with text.
 - Document formatting, when `provideFormatting` is enabled.
 - Completion, triggered automatically by `.` for members.
 - Signature help, triggered by `(` and `,`, retriggered by `)`.
@@ -109,7 +110,8 @@ The `initialize` response advertises:
 
 The server advertises workspace file watching only dynamically, and only when
 the client says `workspace.didChangeWatchedFiles.dynamicRegistration` is
-supported. It then watches `**/*.{nut,gnut}` and `**/mod.json`. Clients that do
+supported. It then watches `**/*.{nut,gnut}`, `**/mod.json`, and
+`**/.sqformat.toml`. Clients that do
 not advertise dynamic registration still work, but external file changes need
 a restart (the server logs this fact). There is no file-operation capability.
 
@@ -130,6 +132,8 @@ only for workspace files and manifests.
   the complete open buffer and reanalyze it.
 - `didChange` uses the last content change in the notification; clients should
   send one complete document.
+- `didSave` reanalyzes the included text and republishes diagnostics as a fallback
+  synchronization point.
 - Open buffers take precedence over disk files for workspace queries.
 - `didClose` removes the open override and reloads the file from disk. It clears
   open-buffer diagnostics, then republishes any workspace lint diagnostics for
@@ -167,6 +171,10 @@ array_spaces = true
 array_multiline_commas = true
 array_multiline_trailing_commas = false
 array_singleline_trailing_commas = false
+
+[lint]
+select = ["ALL"]
+extend-ignore = ["wait-zero"]
 ```
 
 Unset keys retain formatter defaults. Unknown keys are rejected by the config
@@ -174,12 +182,21 @@ parser. The nearest-file behavior is implemented in
 `sqfmt-lib/src/config.rs` and is intentionally the same discovery used by the
 CLI once a starting directory is selected.
 
+The LSP applies `[lint]` selection per source file from the nearest config.
+`select` replaces the defaults, `extend-select` adds rule IDs, and `extend-ignore`
+removes them. `ALL` selects every current and future rule. A named `configFile`
+applies to every indexed file.
+The `advisoryLints` initialization option still enables all advisory rules, except
+those named by `extend-ignore`.
+
 ## Diagnostics
 
-Diagnostics are pushed after initialization, open, change, watched-file, and
-workspace-folder events. Their source is `sqformat`. Each family is bounded to
-avoid flooding a client; syntax, per-document semantic, member, arity, type,
-and lint findings each have an implementation limit of 100 where applicable.
+Diagnostics are pushed after initialization, open, change, save, watched-file,
+and workspace-folder events. Open-document diagnostics are published immediately.
+Diagnostics for unopened workspace files run after a 300 ms debounce in one
+background refresh; newer edits supersede stale results. Their source is `sqformat`.
+Workspace semantic findings are bounded to 500 per open document and linter findings
+to 100 to avoid flooding a client.
 
 ### Syntax diagnostics
 
@@ -228,6 +245,10 @@ publishes warnings for open and unopened files. Lint codes include:
 - `unresolved-manifest-callback`
 - `remote-function-contract-mismatch`
 - `find-used-as-boolean`
+- `empty-else`
+- `unreachable-code`
+- `duplicate-switch-case`
+- `no-effect-expression`
 
 With `advisoryLints: true`, it also publishes:
 `entity-use-after-yield` and `thread-spawned-inside-polling-loop`. Lint codes

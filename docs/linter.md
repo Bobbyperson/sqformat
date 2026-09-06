@@ -30,9 +30,9 @@ needed because linting always recurses. Lint mode does not read stdin: with no
 file arguments it scans `.`.
 
 The effective lint-mode form is `sqformat --lint [--advisory-lints] [--quiet]
-[--github-actions] [FILES...]` (the short lint form is `-l`). Formatter settings such
-as `--config`, `--column-limit`, indent/array options, `--stdin-filename`, and
-`--verbose` are parsed by the shared CLI but have no effect in lint mode.
+[--github-actions] [FILES...]` (the short lint form is `-l`). `--config` selects
+lint configuration as described below. Formatting flags such as `--column-limit`,
+indent/array options, `--stdin-filename`, and `--verbose` have no effect in lint mode.
 
 ### Discovery and manifests
 
@@ -46,8 +46,8 @@ Squirrel files are parsed independently first. Their analyses are then joined
 into one workspace for project-wide checks. Every selected `mod.json` is
 checked against that workspace. Manifest callback checking only recognizes
 valid JSON; malformed JSON produces no callback diagnostics in the linter.
-The linter does not discover or apply `.sqformat.toml`; formatter configuration
-has no effect on lint results.
+The linter discovers `.sqformat.toml` from the current directory upward, or reads
+the file named by `--config`.
 
 ### Output and status
 
@@ -78,6 +78,25 @@ The default run reports all rules below except the two marked **advisory**.
 Advisory rules are not weaker matches; they are omitted by default because
 correctness can depend on lifetime or scheduling guarantees known only to the
 programmer.
+
+### Rule selection
+
+Lint rules can be selected with a Ruff-style table in `.sqformat.toml`:
+
+```toml
+[lint]
+select = ["ALL"]
+extend-select = ["thread-spawned-inside-polling-loop"]
+extend-ignore = ["wait-zero"]
+```
+
+`select` replaces the default rule selection when present. `extend-select` adds
+rules to either that selection or the defaults, and is the usual way to enable
+individual advisory rules. `extend-ignore` removes rules and takes precedence
+over both selection settings and `--advisory-lints`. Selectors are exact rule IDs,
+with the special selector `ALL` matching every current and future rule. Unknown IDs
+have no effect. With no `[lint]` table, all default rules remain enabled and advisory
+rules remain disabled.
 
 ### Suppressing a diagnostic
 
@@ -196,6 +215,58 @@ class Button {}
 Panel function MakePanel() {
     return Button()
 }
+```
+
+### `empty-else`
+
+**Default.** Reports a comment-free `else` branch that contains no statements.
+An empty branch containing a comment is treated as intentional and is not reported.
+
+```squirrel
+if ( ready ) {
+    Start()
+} else {
+}
+```
+
+### `unreachable-code`
+
+**Default.** Reports the first substantive statement after control flow has
+unconditionally returned, thrown, broken, or continued. One finding is emitted
+for each unreachable statement region rather than for every following line. An
+intentional bare `unreachable` sentinel is not itself reported and also ends
+reachable control flow.
+
+```squirrel
+return
+Start() // unreachable
+```
+
+### `duplicate-switch-case`
+
+**Default.** Reports repeated literal case values and repeated `default` cases
+within one switch. Integer spellings are compared by value, so `case 1` and
+`case 0x1` conflict. Dynamic case expressions are left unchecked.
+
+```squirrel
+switch ( value ) {
+case 1:
+    break
+case 1:
+    break
+}
+```
+
+### `no-effect-expression`
+
+**Default.** Reports an expression statement whose result is discarded and whose
+evaluation has no visible call, assignment, mutation, deletion, cloning, or object
+construction. This catches common forgotten-call mistakes such as writing
+`player.GetTeam` instead of `player.GetTeam()`. `expect Type(value)` assertions and
+the bare `unreachable` sentinel are treated as effectful language constructs.
+
+```squirrel
+player.GetTeam
 ```
 
 ### `threaded-loop-without-wait`
@@ -380,6 +451,86 @@ registration and declaration in the selected workspace. Names and remote
 function strings must be statically recognizable; the linter does not infer
 dynamic dispatch or argument types.
 
+### `invalid-remote-argument-type`
+
+**Default.** Reports remote-call payload expressions that are certainly not one
+of the cross-VM types Northstar supports: `null`, `bool`, `int`, or `float`.
+String, array, table, vector, class, function, and lambda literals are reported.
+
+```squirrel
+Remote_CallFunction_NonReplay(player, "ShowMessage", "unsupported")
+```
+
+Variables, calls, properties, and other expressions whose runtime type is not
+known remain unchecked. Encode entities with `GetEncodedEHandle()` before
+sending them.
+
+### `remote-function-not-global`
+
+**Default; project-wide.** Reports a literal target of
+`Remote_CallFunction_NonReplay`, `Remote_CallFunction_Replay`,
+`Remote_CallFunction_UI`, `RunUIScript`, or `RunClientScript` when a matching
+function exists in the destination VM but is not exported with `global` or
+`globalize_all_functions`.
+
+```squirrel
+#if CLIENT
+global function ShowMessage
+void function ShowMessage(int value) {}
+#endif
+```
+
+Dynamic target names, missing declarations, and declarations that are only
+visible in an incompatible VM remain unchecked.
+
+### `callback-signature-mismatch`
+
+**Default; project-wide.** Reports a resolvable callback whose arity, known
+parameter types, or explicit return type does not satisfy a documented
+Northstar callback registration API.
+The initial contract set includes custom network/item/gamemode registration,
+client command and notification callbacks, server-to-client string commands,
+common player lifecycle callbacks, player/NPC kill callbacks, titan doomed,
+and health-kit callbacks.
+
+```squirrel
+void function HandleCommand(entity player, array<string> args) {}
+AddClientCommandCallback("example", HandleCommand)
+// HandleCommand must return bool.
+```
+
+Unresolved callbacks and callbacks without an explicit return type are only
+checked for arity. Unsupported native registration APIs remain unchecked.
+
+### `invalid-http-request-options`
+
+**Default.** Tracks directly named `HttpRequest` variables within a function.
+It reports a body combined with a non-POST method or query parameters on any
+reachable branch.
+
+```squirrel
+HttpRequest request
+request.method = HttpRequestMethod.GET
+request.body = "{}"
+```
+
+Request aliases and mutations performed by helper functions are not tracked.
+
+### `unsafe-file-size-query`
+
+**Default.** Reports `NSGetFileSize(path)` unless the same direct variable or
+string literal is known to exist through a dominating `NSDoesFileExist(path)`
+condition. Reassigning a checked path invalidates the proof.
+
+```squirrel
+if (!NSDoesFileExist(path))
+    return 0
+int size = NSGetFileSize(path)
+```
+
+Wrapper functions and other external guarantees remain unrecognized; suppress
+the rule when the caller or mod setup guarantees the file exists.
+
 ### `unresolved-manifest-callback`
 
 **Default; project-wide.** Reports a string value of a `Before` or `After`
@@ -451,18 +602,23 @@ the Respawn flavor of `sqparse` `v0.5.0`. The supported public entry points are:
 - `analyze_statements_with_tokens(&str, &[&Statement], &[&Token]) -> Analysis`
   also collects `nolint` directives from an existing tokenization.
 - `diagnostics(&[Analysis])` runs default (non-advisory) diagnostics.
-- `diagnostics_with_options(&[Analysis], LintOptions)` enables advisory rules
-  when `LintOptions { advisory: true }` is supplied.
+- `diagnostics_with_options(&[Analysis], LintOptions)` applies global advisory,
+  select, extend-select, and extend-ignore settings.
 - `Workspace::new(...)` builds cross-file facts;
   `Workspace::diagnostics[_with_options](...)` reports Squirrel diagnostics;
   `Workspace::manifest_diagnostics(&str)` checks valid manifest callbacks.
 - `Diagnostic` exposes `range`, `rule`, and `message`; rule IDs are also
   exported as string constants in `sqfmt_lint`.
 
+Use `analyze` or `analyze_statements_with_tokens` for `unreachable-code` and
+`duplicate-switch-case`; the AST-only entry point cannot distinguish mutually
+exclusive preprocessor branches and skips those source-dependent rules.
+
 `Analysis` stores implementation details and should be obtained from the
 analysis functions rather than assembled from fields. The API returns
 diagnostics and applies source directives for the `Analysis`/`Workspace` lint
 path. `SemanticWorkspace::diagnostics` and
 `SemanticWorkspace::diagnostics_with_document` return raw semantic findings;
-callers must pass them to `Analysis::retain_unsuppressed` before publishing
-them. The API does not provide per-rule configuration or automatic fixes.
+callers must apply `LintOptions::enables` and pass them to
+`Analysis::retain_unsuppressed` before publishing them. The API does not provide
+automatic fixes.

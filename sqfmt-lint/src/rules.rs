@@ -5,13 +5,15 @@ use sqparse::ast::{
     FunctionParams, GlobalDefinition, IfStatementType, MethodIdentifier, PrefixOperator, Slot,
     Statement, StatementType, SwitchCaseCondition, TableSlotType, Type, VarDefinitionStatement,
 };
-use sqparse::token::{LiteralToken, StringToken};
+use sqparse::token::{LiteralToken, StringToken, Token};
 
 use super::{
-    Analysis, Diagnostic, ENTITY_USE_AFTER_YIELD_RULE, FIND_USED_AS_BOOLEAN_RULE,
-    FunctionSignature, INVALID_ENTITY_RULE, RemoteCall, SignalUse, SignalUseKind,
-    THREAD_IN_POLLING_LOOP_RULE, UNCHECKED_ENCODED_EHANDLE_RULE, UNSAFE_ARRAY_INDEX_RULE,
-    WAIT_ZERO_RULE, called_expression_name, contains_reachable_wait,
+    Analysis, DUPLICATE_SWITCH_CASE_RULE, Diagnostic, EMPTY_ELSE_RULE, ENTITY_USE_AFTER_YIELD_RULE,
+    FIND_USED_AS_BOOLEAN_RULE, FunctionSignature, INVALID_ENTITY_RULE,
+    INVALID_HTTP_REQUEST_OPTIONS_RULE, INVALID_REMOTE_ARGUMENT_TYPE_RULE,
+    NO_EFFECT_EXPRESSION_RULE, RemoteCall, SignalUse, SignalUseKind, THREAD_IN_POLLING_LOOP_RULE,
+    UNCHECKED_ENCODED_EHANDLE_RULE, UNREACHABLE_CODE_RULE, UNSAFE_ARRAY_INDEX_RULE,
+    UNSAFE_FILE_SIZE_QUERY_RULE, WAIT_ZERO_RULE, called_expression_name, contains_reachable_wait,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,11 +26,43 @@ enum EntityState {
     AfterYield,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum HttpMethod {
+    #[default]
+    Unknown,
+    Post,
+    Other,
+    PossiblyOther,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Presence {
+    #[default]
+    No,
+    Yes,
+    Maybe,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct HttpRequestState {
+    method: HttpMethod,
+    body: Presence,
+    query: Presence,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum FilePath {
+    Variable(String),
+    Literal(String),
+}
+
 #[derive(Clone, Debug, Default)]
 struct FlowState {
     entities: HashMap<String, EntityState>,
     destroy_protected: HashSet<String>,
     unchecked_find_indexes: HashSet<String>,
+    http_requests: HashMap<String, HttpRequestState>,
+    existing_files: HashSet<FilePath>,
 }
 
 impl FlowState {
@@ -59,6 +93,36 @@ impl FlowState {
                 .union(&right.unchecked_find_indexes)
                 .cloned()
                 .collect(),
+            http_requests: left
+                .http_requests
+                .keys()
+                .chain(right.http_requests.keys())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .map(|name| {
+                    let left = left.http_requests.get(name).copied().unwrap_or_default();
+                    let right = right.http_requests.get(name).copied().unwrap_or_default();
+                    (
+                        name.clone(),
+                        HttpRequestState {
+                            method: match (left.method, right.method) {
+                                (left, right) if left == right => left,
+                                (HttpMethod::Unknown, _) | (_, HttpMethod::Unknown) => {
+                                    HttpMethod::Unknown
+                                }
+                                _ => HttpMethod::PossiblyOther,
+                            },
+                            body: join_presence(left.body, right.body),
+                            query: join_presence(left.query, right.query),
+                        },
+                    )
+                })
+                .collect(),
+            existing_files: left
+                .existing_files
+                .intersection(&right.existing_files)
+                .cloned()
+                .collect(),
         }
     }
 
@@ -79,15 +143,18 @@ impl FlowState {
     }
 }
 
-pub(super) fn analyze(statements: &[&Statement<'_>], analysis: &mut Analysis) {
-    let mut analyzer = Analyzer { analysis };
+pub(super) fn analyze(
+    source: Option<&str>,
+    statements: &[&Statement<'_>],
+    analysis: &mut Analysis,
+) {
+    let mut analyzer = Analyzer { source, analysis };
     let mut flow = FlowState::default();
-    for statement in statements {
-        analyzer.statement_type(&statement.ty, &mut flow);
-    }
+    analyzer.statements(statements.iter().copied(), &mut flow);
 }
 
 struct Analyzer<'a> {
+    source: Option<&'a str>,
     analysis: &'a mut Analysis,
 }
 
@@ -100,16 +167,50 @@ impl Analyzer<'_> {
         });
     }
 
+    fn statements<'s>(
+        &mut self,
+        statements: impl IntoIterator<Item = &'s Statement<'s>>,
+        flow: &mut FlowState,
+    ) -> bool {
+        let mut falls_through = true;
+        let mut previous_end = None;
+        for statement in statements {
+            let start = super::semantic::statement_type_start(&statement.ty);
+            if !falls_through
+                && previous_end.is_some_and(|end| {
+                    self.source
+                        .and_then(|source| source.get(end..start))
+                        .is_some_and(has_conditional_directive)
+                })
+            {
+                falls_through = true;
+            }
+            if !falls_through && self.source.is_none() {
+                falls_through = true;
+            }
+            if !falls_through {
+                if matches!(statement.ty, StatementType::Empty(_))
+                    || is_unreachable_sentinel(&statement.ty)
+                {
+                    continue;
+                }
+                self.diagnostic(
+                    super::semantic::statement_type_start(&statement.ty)
+                        ..super::semantic::statement_type_end(&statement.ty),
+                    UNREACHABLE_CODE_RULE,
+                    "statement is unreachable".to_string(),
+                );
+                return false;
+            }
+            falls_through = self.statement_type(&statement.ty, flow);
+            previous_end = Some(super::semantic::statement_type_end(&statement.ty));
+        }
+        falls_through
+    }
+
     fn statement_type(&mut self, statement: &StatementType<'_>, flow: &mut FlowState) -> bool {
         match statement {
-            StatementType::Block(block) => {
-                for statement in &block.statements {
-                    if !self.statement_type(&statement.ty, flow) {
-                        return false;
-                    }
-                }
-                true
-            }
+            StatementType::Block(block) => self.statements(&block.statements, flow),
             StatementType::If(statement) => {
                 self.boolean_context(&statement.condition);
                 self.expression(&statement.condition, flow);
@@ -118,6 +219,10 @@ impl Analyzer<'_> {
                     IfStatementType::NoElse { body } => {
                         let mut body_flow = true_flow;
                         let body_falls_through = self.statement_type(body, &mut body_flow);
+                        if super::expression_truth(&statement.condition) == Some(true) {
+                            *flow = body_flow;
+                            return body_falls_through;
+                        }
                         *flow = if body_falls_through {
                             FlowState::join(&body_flow, &false_flow)
                         } else {
@@ -126,12 +231,32 @@ impl Analyzer<'_> {
                         true
                     }
                     IfStatementType::Else {
-                        body, else_body, ..
+                        body,
+                        else_,
+                        else_body,
                     } => {
+                        if statement_type_is_empty(else_body) && !token_has_comments(else_) {
+                            self.diagnostic(
+                                else_.range.clone(),
+                                EMPTY_ELSE_RULE,
+                                "empty `else` branch can be removed".to_string(),
+                            );
+                        }
                         let mut body_flow = true_flow;
                         let mut else_flow = false_flow;
                         let body_falls_through = self.statement_type(&body.ty, &mut body_flow);
                         let else_falls_through = self.statement_type(else_body, &mut else_flow);
+                        match super::expression_truth(&statement.condition) {
+                            Some(true) => {
+                                *flow = body_flow;
+                                return body_falls_through;
+                            }
+                            Some(false) => {
+                                *flow = else_flow;
+                                return else_falls_through;
+                            }
+                            None => {}
+                        }
                         match (body_falls_through, else_falls_through) {
                             (true, true) => {
                                 *flow = FlowState::join(&body_flow, &else_flow);
@@ -210,18 +335,50 @@ impl Analyzer<'_> {
             StatementType::Switch(statement) => {
                 self.expression(&statement.condition, flow);
                 let mut outcomes = Vec::new();
+                let mut cases: HashMap<String, Vec<Vec<(usize, usize)>>> = HashMap::new();
+                let mut defaults: Vec<Vec<(usize, usize)>> = Vec::new();
                 for case in &statement.cases {
                     let mut case_flow = flow.clone();
-                    if let SwitchCaseCondition::Case { value, .. } = &case.condition {
-                        self.expression(value, &mut case_flow);
-                    }
-                    let mut falls_through = true;
-                    for statement in &case.body {
-                        if !self.statement_type(&statement.ty, &mut case_flow) {
-                            falls_through = false;
-                            break;
+                    match &case.condition {
+                        SwitchCaseCondition::Case { case, value } => {
+                            if let (Some(value), Some(source)) =
+                                (literal_case_key(value), self.source)
+                            {
+                                let path = conditional_branch_path(source, case.range.start);
+                                let paths = cases.entry(value).or_default();
+                                if paths
+                                    .iter()
+                                    .any(|earlier| !branches_are_exclusive(earlier, &path))
+                                {
+                                    self.diagnostic(
+                                        case.range.clone(),
+                                        DUPLICATE_SWITCH_CASE_RULE,
+                                        "switch case duplicates an earlier literal case"
+                                            .to_string(),
+                                    );
+                                }
+                                paths.push(path);
+                            }
+                            self.expression(value, &mut case_flow);
+                        }
+                        SwitchCaseCondition::Default { default } => {
+                            if let Some(source) = self.source {
+                                let path = conditional_branch_path(source, default.range.start);
+                                if defaults
+                                    .iter()
+                                    .any(|earlier| !branches_are_exclusive(earlier, &path))
+                                {
+                                    self.diagnostic(
+                                        default.range.clone(),
+                                        DUPLICATE_SWITCH_CASE_RULE,
+                                        "switch has more than one default case".to_string(),
+                                    );
+                                }
+                                defaults.push(path);
+                            }
                         }
                     }
+                    let falls_through = self.statements(&case.body, &mut case_flow);
                     if falls_through {
                         outcomes.push(case_flow);
                     }
@@ -284,6 +441,17 @@ impl Analyzer<'_> {
                 true
             }
             StatementType::Expression(statement) => {
+                if is_unreachable_expression(&statement.value) {
+                    self.expression(&statement.value, flow);
+                    return false;
+                }
+                if expression_has_no_effect(&statement.value) {
+                    self.diagnostic(
+                        expression_range(&statement.value),
+                        NO_EFFECT_EXPRESSION_RULE,
+                        "expression result is unused and has no effect".to_string(),
+                    );
+                }
                 self.expression(&statement.value, flow);
                 true
             }
@@ -361,6 +529,12 @@ impl Analyzer<'_> {
                 flow.entities
                     .insert(parameter.name.value.to_string(), state);
             }
+            if is_http_request_type(parameter.type_.as_ref()) {
+                flow.http_requests.insert(
+                    parameter.name.value.to_string(),
+                    HttpRequestState::default(),
+                );
+            }
         });
         self.statement_type(&definition.body, &mut flow);
     }
@@ -386,6 +560,7 @@ impl Analyzer<'_> {
                 variable.name.value,
                 variable.initializer.as_ref().map(|v| &*v.value),
                 is_entity_type(Some(&definition.type_)),
+                is_http_request_type(Some(&definition.type_)),
                 flow,
             );
         }
@@ -394,6 +569,7 @@ impl Analyzer<'_> {
             variable.name.value,
             variable.initializer.as_ref().map(|v| &*v.value),
             is_entity_type(Some(&definition.type_)),
+            is_http_request_type(Some(&definition.type_)),
             flow,
         );
     }
@@ -403,6 +579,7 @@ impl Analyzer<'_> {
         name: &str,
         initializer: Option<&Expression<'_>>,
         declared_entity: bool,
+        declared_http_request: bool,
         flow: &mut FlowState,
     ) {
         if let Some(initializer) = initializer {
@@ -418,6 +595,10 @@ impl Analyzer<'_> {
         }
         if initializer.is_some_and(is_find_call) {
             flow.unchecked_find_indexes.insert(name.to_string());
+        }
+        if declared_http_request {
+            flow.http_requests
+                .insert(name.to_string(), HttpRequestState::default());
         }
     }
 
@@ -476,11 +657,24 @@ impl Analyzer<'_> {
                         flow.entities.insert(name.to_string(), EntityState::Valid);
                     }
                     flow.destroy_protected.remove(name);
+                    flow.existing_files
+                        .remove(&FilePath::Variable(name.to_string()));
+                    if flow.http_requests.contains_key(name) {
+                        flow.http_requests
+                            .insert(name.to_string(), HttpRequestState::default());
+                    }
                     if is_find_call(&expression.right) {
                         flow.unchecked_find_indexes.insert(name.to_string());
                     } else {
                         flow.unchecked_find_indexes.remove(name);
                     }
+                } else if matches!(
+                    expression.operator,
+                    BinaryOperator::Assign(_) | BinaryOperator::AssignNewSlot(_, _)
+                ) {
+                    self.expression(&expression.left, flow);
+                    self.expression(&expression.right, flow);
+                    self.http_request_assignment(&expression.left, &expression.right, flow);
                 } else if matches!(expression.operator, BinaryOperator::LogicalAnd(_)) {
                     self.expression(&expression.left, flow);
                     let (mut right_flow, _) = refined_condition(&expression.left, flow);
@@ -565,6 +759,35 @@ impl Analyzer<'_> {
                     if is_yielding_call(name) {
                         flow.mark_yield();
                     }
+                    if matches!(
+                        name,
+                        "Remote_CallFunction_NonReplay"
+                            | "Remote_CallFunction_Replay"
+                            | "Remote_CallFunction_UI"
+                    ) {
+                        for argument in call.arguments.iter().skip(2) {
+                            if definitely_invalid_remote_argument(&argument.value) {
+                                self.diagnostic(
+                                    expression_range(&argument.value),
+                                    INVALID_REMOTE_ARGUMENT_TYPE_RULE,
+                                    "remote calls only accept null, bool, int, or float payloads"
+                                        .to_string(),
+                                );
+                            }
+                        }
+                    }
+                    if name == "NSGetFileSize"
+                        && let Some(argument) = call.arguments.first()
+                        && let Some(path) = file_path(&argument.value)
+                        && !flow.existing_files.contains(&path)
+                    {
+                        self.diagnostic(
+                            expression_range(&argument.value),
+                            UNSAFE_FILE_SIZE_QUERY_RULE,
+                            "NSGetFileSize raises an error unless the file is known to exist"
+                                .to_string(),
+                        );
+                    }
                 }
                 if let Expression::Property(property) = &*call.function
                     && method_name(&property.property) == Some("EndSignal")
@@ -628,6 +851,45 @@ impl Analyzer<'_> {
         self.diagnostic(range, rule, message.to_string());
         if let Some(name) = direct_var(receiver) {
             flow.entities.insert(name.to_string(), EntityState::Valid);
+        }
+    }
+
+    fn http_request_assignment(
+        &mut self,
+        target: &Expression<'_>,
+        value: &Expression<'_>,
+        flow: &mut FlowState,
+    ) {
+        let Some((request, field)) = http_request_field(target) else {
+            return;
+        };
+        let Some(state) = flow.http_requests.get_mut(request) else {
+            return;
+        };
+        let invalid = match field {
+            "method" => {
+                state.method = http_method(value);
+                matches!(state.method, HttpMethod::Other | HttpMethod::PossiblyOther)
+                    && state.body != Presence::No
+            }
+            "body" => {
+                state.body = Presence::Yes;
+                matches!(state.method, HttpMethod::Other | HttpMethod::PossiblyOther)
+                    || state.query != Presence::No
+            }
+            "queryParameters" => {
+                state.query = Presence::Yes;
+                state.body != Presence::No
+            }
+            _ => return,
+        };
+        if invalid {
+            self.diagnostic(
+                expression_range(target),
+                INVALID_HTTP_REQUEST_OPTIONS_RULE,
+                "HttpRequest bodies require POST and cannot be combined with query parameters"
+                    .to_string(),
+            );
         }
     }
 
@@ -747,6 +1009,11 @@ impl Analyzer<'_> {
 
 fn refined_condition(expression: &Expression<'_>, flow: &FlowState) -> (FlowState, FlowState) {
     let expression = strip_parens(expression);
+    if let Some(path) = file_exists_call(expression) {
+        let mut true_flow = flow.clone();
+        true_flow.existing_files.insert(path);
+        return (true_flow, flow.clone());
+    }
     if let Some((name, invalid_when_false)) = entity_check_call(expression) {
         let mut true_flow = flow.clone();
         let mut false_flow = flow.clone();
@@ -1023,6 +1290,88 @@ fn is_nullable_entity_type(type_: &Type<'_>) -> bool {
     matches!(type_, Type::Nullable(nullable) if is_entity_type(Some(&nullable.base)))
 }
 
+fn is_http_request_type(type_: Option<&Type<'_>>) -> bool {
+    match type_ {
+        Some(Type::Plain(type_)) => type_.name.value == "HttpRequest",
+        Some(Type::Reference(type_)) => is_http_request_type(Some(&type_.base)),
+        Some(Type::Nullable(type_)) => is_http_request_type(Some(&type_.base)),
+        _ => false,
+    }
+}
+
+fn join_presence(left: Presence, right: Presence) -> Presence {
+    if left == right { left } else { Presence::Maybe }
+}
+
+fn definitely_invalid_remote_argument(expression: &Expression<'_>) -> bool {
+    match strip_parens(expression) {
+        Expression::Literal(literal) => !matches!(
+            literal.literal,
+            LiteralToken::Int(_, _) | LiteralToken::Float(_)
+        ),
+        Expression::Var(_) => false,
+        Expression::Prefix(prefix) if matches!(prefix.operator, PrefixOperator::Negate(_)) => {
+            definitely_invalid_remote_argument(&prefix.value)
+        }
+        Expression::Array(_)
+        | Expression::Table(_)
+        | Expression::Vector(_)
+        | Expression::Class(_)
+        | Expression::Function(_)
+        | Expression::Lambda(_) => true,
+        _ => false,
+    }
+}
+
+fn http_request_field<'s>(expression: &Expression<'s>) -> Option<(&'s str, &'s str)> {
+    let property = match strip_parens(expression) {
+        Expression::Property(property) => property,
+        Expression::Index(index) => match strip_parens(&index.base) {
+            Expression::Property(property) => property,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    Some((
+        direct_var(&property.base)?,
+        method_name(&property.property)?,
+    ))
+}
+
+fn http_method(expression: &Expression<'_>) -> HttpMethod {
+    let Expression::Property(property) = strip_parens(expression) else {
+        return HttpMethod::Unknown;
+    };
+    if direct_var(&property.base) != Some("HttpRequestMethod") {
+        return HttpMethod::Unknown;
+    }
+    if method_name(&property.property) == Some("POST") {
+        HttpMethod::Post
+    } else {
+        HttpMethod::Other
+    }
+}
+
+fn file_path(expression: &Expression<'_>) -> Option<FilePath> {
+    if let Some(name) = direct_var(expression) {
+        return Some(FilePath::Variable(name.to_string()));
+    }
+    string_literal(expression).map(|value| FilePath::Literal(value.to_string()))
+}
+
+fn file_exists_call(expression: &Expression<'_>) -> Option<FilePath> {
+    let Expression::Call(call) = strip_parens(expression) else {
+        return None;
+    };
+    if !matches!(strip_parens(&call.function), Expression::Var(variable) if variable.name.value == "NSDoesFileExist")
+    {
+        return None;
+    }
+    call.arguments
+        .first()
+        .and_then(|argument| file_path(&argument.value))
+}
+
 fn for_each_parameter<'s>(
     params: &'s FunctionParams<'s>,
     mut visit: impl FnMut(&'s FunctionParam<'s>),
@@ -1067,6 +1416,202 @@ fn method_name<'s>(identifier: &MethodIdentifier<'s>) -> Option<&'s str> {
         MethodIdentifier::Identifier(identifier) => Some(identifier.value),
         MethodIdentifier::Constructor(_) => None,
     }
+}
+
+fn statement_type_is_empty(statement: &StatementType<'_>) -> bool {
+    match statement {
+        StatementType::Empty(statement) => statement
+            .empty
+            .is_none_or(|token| !token_has_comments(token)),
+        StatementType::Block(block) => {
+            !token_has_comments(block.open)
+                && !token_has_comments(block.close)
+                && block.statements.iter().all(|statement| {
+                    statement_type_is_empty(&statement.ty)
+                        && statement
+                            .semicolon
+                            .is_none_or(|token| !token_has_comments(token))
+                })
+        }
+        _ => false,
+    }
+}
+
+fn token_has_comments(token: &Token<'_>) -> bool {
+    !token.comments.is_empty()
+        || token
+            .before_lines
+            .iter()
+            .any(|line| !line.comments.is_empty())
+        || token
+            .new_line
+            .as_ref()
+            .is_some_and(|line| !line.comments.is_empty())
+}
+
+fn literal_case_key(expression: &Expression<'_>) -> Option<String> {
+    let expression = strip_parens(expression);
+    if let Expression::Prefix(prefix) = expression
+        && matches!(prefix.operator, PrefixOperator::Negate(_))
+    {
+        return literal_case_key(&prefix.value).map(|key| format!("negative:{key}"));
+    }
+    let Expression::Literal(literal) = expression else {
+        return None;
+    };
+    Some(match literal.literal {
+        LiteralToken::Int(value, _) => format!("int:{value}"),
+        LiteralToken::Float(value) => format!("float:{:x}", value.to_bits()),
+        LiteralToken::Char(value) => format!("char:{value}"),
+        LiteralToken::String(StringToken::Literal(value) | StringToken::Verbatim(value)) => {
+            format!("string:{value}")
+        }
+        LiteralToken::String(StringToken::Asset(value)) => format!("asset:{value}"),
+    })
+}
+
+fn has_conditional_directive(source: &str) -> bool {
+    conditional_directives(source)
+        .into_iter()
+        .any(|(_, directive)| {
+            matches!(
+                directive,
+                "if" | "ifdef" | "ifndef" | "elif" | "elseif" | "else" | "endif"
+            )
+        })
+}
+
+fn conditional_branch_path(source: &str, offset: usize) -> Vec<(usize, usize)> {
+    let mut path = Vec::new();
+    for (line_start, directive) in conditional_directives(source.get(..offset).unwrap_or_default())
+    {
+        match directive {
+            "if" | "ifdef" | "ifndef" => path.push((line_start, 0)),
+            "elif" | "elseif" | "else" => {
+                if let Some((_, branch)) = path.last_mut() {
+                    *branch += 1;
+                }
+            }
+            "endif" => {
+                path.pop();
+            }
+            _ => {}
+        }
+    }
+    path
+}
+
+fn conditional_directives(source: &str) -> Vec<(usize, &str)> {
+    let mut directives = Vec::new();
+    let mut in_block_comment = false;
+    let mut line_start = 0;
+    for line in source.split_inclusive('\n') {
+        let mut rest = line;
+        loop {
+            if in_block_comment {
+                let Some(end) = rest.find("*/") else {
+                    break;
+                };
+                rest = &rest[end + 2..];
+                in_block_comment = false;
+            }
+            rest = rest.trim_start_matches(|character: char| character.is_ascii_whitespace());
+            if let Some(after) = rest.strip_prefix("/*") {
+                rest = after;
+                in_block_comment = true;
+                continue;
+            }
+            if let Some(after) = rest.strip_prefix('#')
+                && let Some(directive) = after.split_whitespace().next()
+            {
+                directives.push((line_start, directive));
+                break;
+            }
+            if let Some(start) = rest.find("/*")
+                && rest.find("//").is_none_or(|comment| start < comment)
+            {
+                rest = &rest[start + 2..];
+                in_block_comment = true;
+                continue;
+            }
+            break;
+        }
+        line_start += line.len();
+    }
+    directives
+}
+
+fn branches_are_exclusive(left: &[(usize, usize)], right: &[(usize, usize)]) -> bool {
+    left.iter().any(|(left_group, left_branch)| {
+        right.iter().any(|(right_group, right_branch)| {
+            left_group == right_group && left_branch != right_branch
+        })
+    })
+}
+
+fn expression_has_no_effect(expression: &Expression<'_>) -> bool {
+    match expression {
+        Expression::Parens(expression) => expression_has_no_effect(&expression.value),
+        Expression::Literal(_) | Expression::Var(_) | Expression::RootVar(_) => true,
+        Expression::Index(expression) => {
+            expression_has_no_effect(&expression.base)
+                && expression_has_no_effect(&expression.index)
+        }
+        Expression::Property(expression) => expression_has_no_effect(&expression.base),
+        Expression::Ternary(expression) => {
+            expression_has_no_effect(&expression.condition)
+                && expression_has_no_effect(&expression.true_value)
+                && expression_has_no_effect(&expression.false_value)
+        }
+        Expression::Binary(expression) => {
+            !matches!(
+                expression.operator,
+                BinaryOperator::Assign(_)
+                    | BinaryOperator::AssignNewSlot(_, _)
+                    | BinaryOperator::AssignAdd(_)
+                    | BinaryOperator::AssignSubtract(_)
+                    | BinaryOperator::AssignMultiply(_)
+                    | BinaryOperator::AssignDivide(_)
+                    | BinaryOperator::AssignModulo(_)
+            ) && expression_has_no_effect(&expression.left)
+                && expression_has_no_effect(&expression.right)
+        }
+        Expression::Prefix(expression) => {
+            matches!(
+                expression.operator,
+                PrefixOperator::Negate(_)
+                    | PrefixOperator::LogicalNot(_)
+                    | PrefixOperator::BitwiseNot(_)
+                    | PrefixOperator::Typeof(_)
+            ) && expression_has_no_effect(&expression.value)
+        }
+        Expression::Comma(expression) => {
+            expression
+                .values
+                .items
+                .iter()
+                .all(|(value, _)| expression_has_no_effect(value))
+                && expression_has_no_effect(&expression.values.last_item)
+        }
+        Expression::Vector(_) => false,
+        Expression::Expect(_) => false,
+        Expression::Postfix(_)
+        | Expression::Table(_)
+        | Expression::Class(_)
+        | Expression::Array(_)
+        | Expression::Function(_)
+        | Expression::Lambda(_)
+        | Expression::Call(_)
+        | Expression::Delegate(_) => false,
+    }
+}
+
+fn is_unreachable_sentinel(statement: &StatementType<'_>) -> bool {
+    matches!(statement, StatementType::Expression(statement) if is_unreachable_expression(&statement.value))
+}
+
+fn is_unreachable_expression(expression: &Expression<'_>) -> bool {
+    matches!(strip_parens(expression), Expression::Var(variable) if variable.name.value == "unreachable")
 }
 
 fn expression_range(expression: &Expression<'_>) -> std::ops::Range<usize> {
