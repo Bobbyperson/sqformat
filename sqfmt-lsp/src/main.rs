@@ -222,16 +222,10 @@ impl Backend {
                         .map(|(uri, _)| uri.clone())
                         .collect::<HashSet<_>>();
                     let stale_lint_files = {
-                        let mut published = published_lint_files
-                            .write()
+                        let published = published_lint_files
+                            .read()
                             .expect("published lint lock poisoned");
-                        let stale = published
-                            .difference(&current_lint_files)
-                            .filter(|uri| !open_files.contains(*uri))
-                            .cloned()
-                            .collect::<Vec<_>>();
-                        *published = current_lint_files;
-                        stale
+                        stale_lint_files(&published, &current_lint_files, &open_files)
                     };
                     publications.extend(stale_lint_files.into_iter().map(|uri| (uri, Vec::new())));
                     publications.sort_by(|left, right| left.0.cmp(&right.0));
@@ -247,7 +241,17 @@ impl Backend {
                         {
                             continue;
                         }
-                        client.publish_diagnostics(uri, diagnostics, None).await;
+                        let cleared = diagnostics.is_empty();
+                        client
+                            .publish_diagnostics(uri.clone(), diagnostics, None)
+                            .await;
+                        record_lint_publication(
+                            &mut published_lint_files
+                                .write()
+                                .expect("published lint lock poisoned"),
+                            uri,
+                            cleared,
+                        );
                     }
                 }
 
@@ -1311,6 +1315,18 @@ impl LanguageServer for Backend {
             SymbolTarget::Local(declaration) => {
                 let documents = self.documents.read().expect("document lock poisoned");
                 let document = documents.get(&uri).expect("document remained open");
+                if resolved.name != params.new_name
+                    && !local_rename_is_safe(
+                        &document.text,
+                        &document.semantic,
+                        &declaration,
+                        &params.new_name,
+                    )
+                {
+                    return Err(tower_lsp_server::jsonrpc::Error::invalid_params(
+                        "new name conflicts with an existing declaration or captures a reference",
+                    ));
+                }
                 let edits = changes.entry(uri).or_default();
                 edits.push(TextEdit::new(
                     lsp_range(&document.text, declaration.clone()),
@@ -1327,12 +1343,8 @@ impl LanguageServer for Backend {
                 );
             }
             SymbolTarget::Global(name) => {
-                let occurrences = self
-                    .workspace
-                    .read()
-                    .expect("workspace lock poisoned")
-                    .global_occurrences(&name);
                 let workspace = self.workspace.read().expect("workspace lock poisoned");
+                let occurrences = workspace.global_occurrences(&name);
                 if occurrences
                     .iter()
                     .any(|occurrence| workspace.is_api_file(&occurrence.uri))
@@ -1351,6 +1363,13 @@ impl LanguageServer for Backend {
                 {
                     return Err(tower_lsp_server::jsonrpc::Error::invalid_params(
                         "cannot rename an unresolved global symbol",
+                    ));
+                }
+                if name != params.new_name
+                    && workspace.global_rename_conflicts(&name, &params.new_name)
+                {
+                    return Err(tower_lsp_server::jsonrpc::Error::invalid_params(
+                        "new name conflicts with an existing declaration or captures a reference",
                     ));
                 }
                 for occurrence in occurrences {
@@ -1469,6 +1488,102 @@ fn lsp_range(source: &str, range: std::ops::Range<usize>) -> Range {
         sqformat_lsp::position_at(source, range.start),
         sqformat_lsp::position_at(source, range.end),
     )
+}
+
+fn stale_lint_files(
+    published: &HashSet<Uri>,
+    current: &HashSet<Uri>,
+    open: &HashSet<Uri>,
+) -> Vec<Uri> {
+    published
+        .difference(current)
+        .filter(|uri| !open.contains(*uri))
+        .cloned()
+        .collect()
+}
+
+fn record_lint_publication(published: &mut HashSet<Uri>, uri: Uri, cleared: bool) {
+    if cleared {
+        published.remove(&uri);
+    } else {
+        published.insert(uri);
+    }
+}
+
+fn local_rename_is_safe(
+    source: &str,
+    semantic: &SemanticDocument,
+    declaration: &std::ops::Range<usize>,
+    new_name: &str,
+) -> bool {
+    let mut edits = semantic.local_references(declaration);
+    edits.push(declaration.clone());
+    edits.sort_by_key(|range| range.start);
+
+    let mut renamed = String::with_capacity(source.len());
+    let mut mapped_edits = Vec::with_capacity(edits.len());
+    let mut cursor = 0;
+    for range in &edits {
+        if range.start < cursor || range.end > source.len() {
+            return false;
+        }
+        renamed.push_str(&source[cursor..range.start]);
+        let mapped_start = renamed.len();
+        renamed.push_str(new_name);
+        mapped_edits.push((range.clone(), mapped_start..renamed.len()));
+        cursor = range.end;
+    }
+    renamed.push_str(&source[cursor..]);
+
+    let Some(mapped_declaration) = mapped_edits
+        .iter()
+        .find(|(original, _)| original == declaration)
+        .map(|(_, mapped)| mapped.clone())
+    else {
+        return false;
+    };
+    let renamed_semantic = semantic_document(&renamed);
+    if renamed_semantic.duplicates.iter().any(|duplicate| {
+        duplicate.range == mapped_declaration || duplicate.previous == mapped_declaration
+    }) {
+        return false;
+    }
+
+    for (_, mapped) in &mapped_edits {
+        if *mapped == mapped_declaration {
+            continue;
+        }
+        if !renamed_semantic.references.iter().any(|reference| {
+            reference.range == *mapped && reference.target.as_ref() == Some(&mapped_declaration)
+        }) {
+            return false;
+        }
+    }
+
+    semantic
+        .references
+        .iter()
+        .filter(|reference| reference.name == new_name)
+        .all(|reference| {
+            let shift = mapped_edits
+                .iter()
+                .filter(|(original, _)| original.end <= reference.range.start)
+                .map(|(original, mapped)| mapped.len() as isize - original.len() as isize)
+                .sum::<isize>();
+            let mapped_start = reference.range.start.checked_add_signed(shift);
+            let mapped_end = reference.range.end.checked_add_signed(shift);
+            let Some(mapped_range) = mapped_start.zip(mapped_end).map(|(start, end)| start..end)
+            else {
+                return false;
+            };
+            renamed_semantic
+                .references
+                .iter()
+                .find(|renamed_reference| renamed_reference.range == mapped_range)
+                .is_some_and(|renamed_reference| {
+                    renamed_reference.target.as_ref() != Some(&mapped_declaration)
+                })
+        })
 }
 
 fn completion_item(declaration: &OwnedDeclaration, sort_prefix: &str) -> CompletionItem {
@@ -1704,4 +1819,145 @@ async fn main() {
     let stdout = tokio::io::stdout();
     let (service, socket) = LspService::new(Backend::new);
     Server::new(stdin, stdout, socket).serve(service).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn uri(name: &str) -> Uri {
+        Uri::from_file_path(format!("/project/{name}.nut")).expect("absolute path")
+    }
+
+    fn index_file(workspace: &mut WorkspaceIndex, uri: Uri, source: &str) {
+        let analysis = analyze_document(source);
+        workspace.insert(
+            uri,
+            IndexedFile::new(
+                source.to_string(),
+                analysis.symbols,
+                analysis.semantic,
+                analysis.lint,
+            ),
+        );
+    }
+
+    fn local_rename(source: &str, old_name: &str, new_name: &str) -> bool {
+        let semantic = semantic_document(source);
+        let declaration = semantic
+            .declarations_named(old_name)
+            .find(|declaration| !declaration.file_scope)
+            .expect("local declaration");
+        local_rename_is_safe(source, &semantic, &declaration.range, new_name)
+    }
+
+    #[test]
+    fn interrupted_diagnostic_clears_remain_pending() {
+        let first = uri("first");
+        let second = uri("second");
+        let mut published = HashSet::from([first.clone(), second.clone()]);
+        let stale = stale_lint_files(&published, &HashSet::new(), &HashSet::new());
+
+        assert_eq!(stale.len(), 2);
+        record_lint_publication(&mut published, first, true);
+
+        assert_eq!(published, HashSet::from([second]));
+    }
+
+    #[test]
+    fn local_rename_rejects_same_scope_collision() {
+        let source = concat!(
+            "void function Example() {\n",
+            "\tlocal original = 1\n",
+            "\tlocal occupied = 2\n",
+            "\tprintt( original )\n",
+            "}\n",
+        );
+
+        assert!(!local_rename(source, "original", "occupied"));
+    }
+
+    #[test]
+    fn local_rename_rejects_capture_by_intervening_binding() {
+        let source = concat!(
+            "void function Example() {\n",
+            "\tlocal original = 1\n",
+            "\t{\n",
+            "\t\tlocal occupied = 2\n",
+            "\t\tprintt( original )\n",
+            "\t}\n",
+            "}\n",
+        );
+
+        assert!(!local_rename(source, "original", "occupied"));
+    }
+
+    #[test]
+    fn local_rename_rejects_capture_of_existing_reference() {
+        let source = concat!(
+            "void function Example() {\n",
+            "\tlocal original = 1\n",
+            "\tprintt( occupied )\n",
+            "\tprintt( original )\n",
+            "}\n",
+        );
+
+        assert!(!local_rename(source, "original", "occupied"));
+    }
+
+    #[test]
+    fn local_rename_allows_unaffected_nested_binding() {
+        let source = concat!(
+            "void function Example() {\n",
+            "\tlocal original = 1\n",
+            "\t{ local occupied = 2 }\n",
+            "\tprintt( original )\n",
+            "}\n",
+        );
+
+        assert!(local_rename(source, "original", "occupied"));
+    }
+
+    #[test]
+    fn global_rename_rejects_global_declaration_collision() {
+        let source = concat!(
+            "global function Original\n",
+            "global function Occupied\n",
+            "void function Original() {}\n",
+            "void function Occupied() {}\n",
+        );
+        let mut workspace = WorkspaceIndex::default();
+        index_file(&mut workspace, uri("globals"), source);
+
+        assert!(workspace.global_rename_conflicts("Original", "Occupied"));
+    }
+
+    #[test]
+    fn global_rename_rejects_capture_by_intervening_local() {
+        let source = concat!(
+            "global function Original\n",
+            "void function Original() {}\n",
+            "void function Use() {\n",
+            "\tlocal Occupied = 1\n",
+            "\t{ Original() }\n",
+            "}\n",
+        );
+        let mut workspace = WorkspaceIndex::default();
+        index_file(&mut workspace, uri("capture"), source);
+
+        assert!(workspace.global_rename_conflicts("Original", "Occupied"));
+    }
+
+    #[test]
+    fn global_rename_allows_unshadowed_name() {
+        let source = concat!(
+            "global function Original\n",
+            "void function Original() {}\n",
+            "void function Use() { Original() }\n",
+        );
+        let mut workspace = WorkspaceIndex::default();
+        index_file(&mut workspace, uri("safe"), source);
+
+        assert!(!workspace.global_rename_conflicts("Original", "Available"));
+    }
 }

@@ -25,7 +25,7 @@ Run `sqformat --help` for the corresponding command-line options.
 
 ## Line Length
 
-The default column limit is **160 characters**. When a construct exceeds this limit, sqformat falls back to a multi-line layout. When it fits, it stays on one line.
+The default column limit is **160 columns**. Unicode characters count as one column, and tabs count as the configured indentation width. When a construct exceeds this limit, sqformat falls back to a multi-line layout. When it fits, it stays on one line.
 
 ---
 
@@ -166,6 +166,8 @@ someFunction(
 )
 ```
 
+Comments attached to an opening parenthesis are preserved and force the call to use its multi-line layout.
+
 ---
 
 ## Spaces in Arrays
@@ -295,6 +297,8 @@ someObject
 	.someMethod()
 	.anotherMethod()
 ```
+
+A comment after `.` is preserved; the property continues on the following line.
 
 ---
 
@@ -545,7 +549,7 @@ struct MyStruct
 
 ## Tables
 
-Spaces inside `{ }` for single-line tables. Empty tables get no spaces: `{}`. Multi-line tables indent each slot.
+Spaces inside `{ }` for single-line tables. Empty tables get no spaces: `{}`. A table containing only comments uses a multi-line layout and preserves those comments. Multi-line tables indent each slot.
 
 ```squirrel
 // single-line

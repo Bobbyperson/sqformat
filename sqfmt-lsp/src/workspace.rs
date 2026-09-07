@@ -514,6 +514,45 @@ impl WorkspaceIndex {
         occurrences
     }
 
+    pub fn global_rename_conflicts(&self, old_name: &str, new_name: &str) -> bool {
+        if self.files.values().any(|file| {
+            file.semantic
+                .declarations_named(new_name)
+                .any(|declaration| declaration.is_global)
+        }) {
+            return true;
+        }
+
+        self.files.values().any(|file| {
+            let old_declaration_in_file = file
+                .semantic
+                .declarations_named(old_name)
+                .any(|declaration| declaration.is_global);
+            if old_declaration_in_file
+                && file
+                    .semantic
+                    .declarations_named(new_name)
+                    .any(|declaration| {
+                        declaration.file_scope
+                            && !declaration.namespaced
+                            && declaration.owner.is_none()
+                    })
+            {
+                return true;
+            }
+
+            file.semantic
+                .global_references(old_name)
+                .into_iter()
+                .any(|reference| {
+                    file.semantic
+                        .visible_declarations(reference.start)
+                        .into_iter()
+                        .any(|declaration| declaration.name == new_name)
+                })
+        })
+    }
+
     pub fn global_declarations(&self, name: &str) -> Vec<WorkspaceDeclaration> {
         let mut declarations = self
             .files

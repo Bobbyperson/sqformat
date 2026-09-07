@@ -1196,12 +1196,11 @@ void function Poll( entity ent ) {
     fn reports_only_expression_statements_with_no_visible_effect() {
         assert_diagnostics(
             &[
-                "void function Example(int value, table object) { value; object.member; 1 + 2; Work(); value = 2; value++; delete object.member; clone object; <1, 2, 3>; expect int(value); unreachable }",
+                "void function Example(int value, table object) { value; object.member; object[\"member\"]; 1 + 2; Work(); value = 2; value++; delete object.member; clone object; <1, 2, 3>; expect int(value); unreachable }",
             ],
             LintOptions::default(),
             &[
                 (NO_EFFECT_EXPRESSION_RULE, 0, "value"),
-                (NO_EFFECT_EXPRESSION_RULE, 0, "object.member"),
                 (NO_EFFECT_EXPRESSION_RULE, 0, "1 + 2"),
             ],
         );

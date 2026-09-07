@@ -150,6 +150,19 @@ where
                 let owner =
                     self.resolve_value_owner_with_document(file, document, &reference.receiver)?;
                 let chain = self.closed_owner_chain(&owner, Some(file), Some(document))?;
+                let has_dynamic_getter = chain.iter().any(|owner| {
+                    self.direct_members(
+                        &ResolvedType::Nominal(owner.clone()),
+                        Some(file),
+                        Some(document),
+                        None,
+                    )
+                    .iter()
+                    .any(|member| member.name == "_get")
+                });
+                if has_dynamic_getter {
+                    return None;
+                }
                 let declared = chain.iter().any(|owner| {
                     self.direct_members(
                         &ResolvedType::Nominal(owner.clone()),
@@ -406,8 +419,11 @@ where
                 if actual_name == expected_base
                     && actual.label.starts_with(&format!("{actual_name}<"))
                 {
-                    return actual.label == *expected
-                        || actual.label.starts_with(&format!("{expected} "));
+                    return self.canonical_type_label(
+                        parameter_type_label(&actual.label),
+                        file,
+                        document,
+                    ) == self.canonical_type_label(expected, file, document);
                 }
                 matches!(
                     self.resolve_type_identity_with_override(
@@ -419,6 +435,33 @@ where
                     Some(ResolvedType::Nominal(resolved)) if resolved == expected_base
                 )
             })
+    }
+
+    fn canonical_type_label(&self, label: &str, file: &I, document: &SemanticDocument) -> String {
+        let mut canonical = String::new();
+        let mut rest = label;
+        while let Some(start) =
+            rest.find(|character: char| character.is_ascii_alphanumeric() || character == '_')
+        {
+            canonical.extend(
+                rest[..start]
+                    .chars()
+                    .filter(|character| !character.is_whitespace()),
+            );
+            rest = &rest[start..];
+            let end = rest
+                .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .unwrap_or(rest.len());
+            let name = &rest[..end];
+            canonical.push_str(
+                &self
+                    .resolve_nominal_type(name, Some(file), Some(document), &mut HashSet::new())
+                    .unwrap_or_else(|| name.to_string()),
+            );
+            rest = &rest[end..];
+        }
+        canonical.extend(rest.chars().filter(|character| !character.is_whitespace()));
+        canonical
     }
 
     fn mismatch(
@@ -1450,6 +1493,24 @@ fn expected_arguments(signature: &OwnedSignature) -> String {
     format!("{required} to {declared} arguments")
 }
 
+fn parameter_type_label(label: &str) -> &str {
+    let mut generic_depth = 0;
+    for (offset, character) in label.char_indices() {
+        match character {
+            '<' => generic_depth += 1,
+            '>' => {
+                generic_depth -= 1;
+                if generic_depth == 0 {
+                    return &label[..offset + character.len_utf8()];
+                }
+            }
+            _ if character.is_whitespace() && generic_depth == 0 => return &label[..offset],
+            _ => {}
+        }
+    }
+    label
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1483,6 +1544,14 @@ mod tests {
         assert_diagnostics(
             "class Expected {} void function Example() { Expected().Missing() }",
             &[(INVALID_MEMBER_RULE, "Missing")],
+        );
+    }
+
+    #[test]
+    fn accepts_dynamic_member_from_inherited_getter() {
+        assert_diagnostics(
+            "class Base { function _get(name) { return null } } class Derived extends Base {} void function Example() { Derived().Missing }",
+            &[],
         );
     }
 
@@ -1616,6 +1685,20 @@ void function Init() {
             r#"
 typedef PlayerEntity entity
 bool function HandleCommand( PlayerEntity player, array<string> args ) { return true }
+void function Init() {
+	AddClientCommandCallback( "example", HandleCommand )
+}
+"#,
+            &[],
+        );
+    }
+
+    #[test]
+    fn accepts_callback_generic_element_typedef() {
+        assert_diagnostics(
+            r#"
+typedef Text string
+bool function HandleCommand( entity player, array<Text> args ) { return true }
 void function Init() {
 	AddClientCommandCallback( "example", HandleCommand )
 }

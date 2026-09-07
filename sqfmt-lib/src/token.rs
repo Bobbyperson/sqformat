@@ -71,6 +71,15 @@ pub fn token_ignoring_blank_lines<'s>(
     token: &'s Token<'s>,
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |mut i| {
+        if i.is_single_line()
+            && token
+                .before_lines
+                .iter()
+                .any(|line| !line.comments.is_empty())
+        {
+            return None;
+        }
+
         // Emit only before_lines that have comments, skip blank separators
         for before_line in &token.before_lines {
             if !before_line.comments.is_empty() {

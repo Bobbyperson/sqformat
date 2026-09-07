@@ -1127,6 +1127,51 @@ mod integration_tests {
     }
 
     #[test]
+    fn expression_delimiter_comments_are_preserved_idempotently() {
+        let cases = [
+            ("foo( // keep\nbar)\n", "foo( // keep\n    bar\n)\n"),
+            ("foo. // keep\nbar\n", "foo\n    . // keep\n    bar\n"),
+            (
+                "foo({\n// keep\n})\n",
+                "foo(\n    {\n        // keep\n    }\n)\n",
+            ),
+        ];
+
+        for (input, expected) in cases {
+            let output = format_test(input);
+            assert_eq!(output, expected);
+            assert_eq!(format_test(&output), output, "not idempotent: {input}");
+        }
+    }
+
+    #[test]
+    fn binary_rhs_trailing_permission_does_not_leak_into_nested_call() {
+        let input = "a + foo(b // comment\n, c)\n";
+        let output = format_test(input);
+
+        assert_eq!(
+            output,
+            "a +\n    foo(\n        b // comment\n        ,\n        c\n    )\n"
+        );
+        assert_eq!(format_test(&output), output);
+    }
+
+    #[test]
+    fn multiline_string_literals_preserve_contents() {
+        let input = concat!(
+            "local verbatim = @\"first  \n",
+            "\tsecond\n",
+            "\"\n",
+            "local escaped = \"first\\\n",
+            "second\"\n",
+        );
+        let output = format_test(input);
+
+        assert_eq!(output, input);
+        assert_eq!(format_test(&output), output);
+    }
+
+    #[test]
     fn format_table_expression_single_line_with_commas() {
         // slots with commas stay single-line and keep commas
         assert_eq!(

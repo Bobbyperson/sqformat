@@ -1553,11 +1553,6 @@ fn expression_has_no_effect(expression: &Expression<'_>) -> bool {
     match expression {
         Expression::Parens(expression) => expression_has_no_effect(&expression.value),
         Expression::Literal(_) | Expression::Var(_) | Expression::RootVar(_) => true,
-        Expression::Index(expression) => {
-            expression_has_no_effect(&expression.base)
-                && expression_has_no_effect(&expression.index)
-        }
-        Expression::Property(expression) => expression_has_no_effect(&expression.base),
         Expression::Ternary(expression) => {
             expression_has_no_effect(&expression.condition)
                 && expression_has_no_effect(&expression.true_value)
@@ -1595,7 +1590,9 @@ fn expression_has_no_effect(expression: &Expression<'_>) -> bool {
         }
         Expression::Vector(_) => false,
         Expression::Expect(_) => false,
-        Expression::Postfix(_)
+        Expression::Index(_)
+        | Expression::Property(_)
+        | Expression::Postfix(_)
         | Expression::Table(_)
         | Expression::Class(_)
         | Expression::Array(_)
