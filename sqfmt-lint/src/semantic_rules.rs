@@ -352,6 +352,46 @@ where
     ) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
         for call in &document.calls {
+            let viable = self
+                .arity_signatures(file, document, &call.callable)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|signature| accepts_arguments(signature, call.arguments.len()))
+                .collect::<Vec<_>>();
+            if !viable.is_empty() {
+                for (index, argument) in call.arguments.iter().enumerate() {
+                    let expected = viable
+                        .iter()
+                        .filter_map(|signature| {
+                            signature
+                                .parameters
+                                .get(index)
+                                .and_then(|parameter| parameter.callback_signature.as_ref())
+                        })
+                        .collect::<Vec<_>>();
+                    if expected.len() != viable.len() {
+                        continue;
+                    }
+                    let actual =
+                        self.callable_signatures_with_document(file, document, &argument.source);
+                    if actual.is_empty()
+                        || actual.iter().any(|actual| {
+                            expected.iter().any(|expected| {
+                                self.callback_signatures_match(file, document, actual, expected)
+                            })
+                        })
+                    {
+                        continue;
+                    }
+                    diagnostics.push(diagnostic(
+                        argument.range.clone(),
+                        CALLBACK_SIGNATURE_MISMATCH_RULE,
+                        format!("callback must match `{}`", expected[0].label),
+                    ));
+                }
+                continue;
+            }
+
             let ValueSource::Workspace(callee) = &call.callable else {
                 continue;
             };
@@ -388,6 +428,32 @@ where
             ));
         }
         diagnostics
+    }
+
+    fn callback_signatures_match(
+        &self,
+        file: &I,
+        document: &SemanticDocument,
+        actual: &OwnedSignature,
+        expected: &OwnedSignature,
+    ) -> bool {
+        let required = expected
+            .parameters
+            .iter()
+            .filter(|parameter| !parameter.optional)
+            .count();
+        let arity_matches = (required..=expected.parameters.len())
+            .all(|arguments| accepts_arguments(actual, arguments));
+        let parameter_types = expected
+            .parameters
+            .iter()
+            .map(|parameter| parameter_type_label(&parameter.label))
+            .collect::<Vec<_>>();
+        arity_matches
+            && signature_return_type(actual).is_none_or(|actual| {
+                signature_return_type(expected).is_none_or(|expected| actual == expected)
+            })
+            && self.callback_parameter_types_match(file, document, actual, &parameter_types)
     }
 
     fn file_targets(&self, file: &I) -> VmTargets {
@@ -1637,6 +1703,59 @@ void function Init() {
 }
 "#,
             &[],
+        );
+    }
+
+    #[test]
+    fn reports_callback_signature_from_functionref_parameter() {
+        assert_diagnostics(
+            r#"
+void function GameMode_SetTitanSpawnpointsRatingFunc(
+	string gameModeName,
+	void functionref( int, array<entity>, int, entity ) func
+) {}
+void function RateSpawnpoints( int team, array<entity> spawnpoints ) {}
+void function Init() {
+	GameMode_SetTitanSpawnpointsRatingFunc( "example", RateSpawnpoints )
+}
+"#,
+            &[(CALLBACK_SIGNATURE_MISMATCH_RULE, "RateSpawnpoints")],
+        );
+    }
+
+    #[test]
+    fn accepts_callback_signature_from_functionref_parameter() {
+        assert_diagnostics(
+            r#"
+void function GameMode_SetTitanSpawnpointsRatingFunc(
+	string gameModeName,
+	void functionref( int, array<entity>, int, entity ) func
+) {}
+void function RateSpawnpoints(
+	int team,
+	array<entity> spawnpoints,
+	int rating,
+	entity context
+) {}
+void function Init() {
+	GameMode_SetTitanSpawnpointsRatingFunc( "example", RateSpawnpoints )
+}
+"#,
+            &[],
+        );
+    }
+
+    #[test]
+    fn reports_functionref_callback_parameter_type_mismatch() {
+        assert_diagnostics(
+            r#"
+void function Register( void functionref( int ) callback ) {}
+void function Callback( string value ) {}
+void function Init() {
+	Register( Callback )
+}
+"#,
+            &[(CALLBACK_SIGNATURE_MISMATCH_RULE, "Callback")],
         );
     }
 

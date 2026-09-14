@@ -63,6 +63,7 @@ pub struct OwnedParameter {
     /// Declared with a default value, so a call may leave it out.
     pub optional: bool,
     pub type_identity: Option<TypeIdentity>,
+    pub callback_signature: Option<OwnedSignature>,
 }
 
 /// A value a `return` statement produces, and the range of the expression that produced it.
@@ -2529,6 +2530,7 @@ fn functionref_signature(name: Option<&str>, type_: &Type<'_>) -> Option<OwnedSi
                     variadic: false,
                     optional: param.initializer.is_some(),
                     type_identity: type_identity(&param.type_),
+                    callback_signature: functionref_signature(None, &param.type_),
                 })
                 .collect()
         })
@@ -2582,6 +2584,7 @@ fn function_parameters(params: &FunctionParams<'_>) -> Vec<OwnedParameter> {
                     variadic: true,
                     optional: false,
                     type_identity: None,
+                    callback_signature: None,
                 }))
                 .collect(),
         ),
@@ -2590,6 +2593,7 @@ fn function_parameters(params: &FunctionParams<'_>) -> Vec<OwnedParameter> {
             variadic: true,
             optional: false,
             type_identity: None,
+            callback_signature: None,
         }]),
     };
     parameters.unwrap_or_default()
@@ -2601,6 +2605,10 @@ fn owned_parameter(parameter: &FunctionParam<'_>) -> OwnedParameter {
         variadic: false,
         optional: parameter.initializer.is_some(),
         type_identity: parameter.type_.as_ref().and_then(type_identity),
+        callback_signature: parameter
+            .type_
+            .as_ref()
+            .and_then(|type_| functionref_signature(None, type_)),
     }
 }
 

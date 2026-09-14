@@ -486,8 +486,8 @@ visible in an incompatible VM remain unchecked.
 ### `callback-signature-mismatch`
 
 **Default; project-wide.** Reports a resolvable callback whose arity, known
-parameter types, or explicit return type does not satisfy a documented
-Northstar callback registration API.
+parameter types, or explicit return type does not satisfy a typed `functionref`
+parameter or a documented Northstar callback registration API.
 The initial contract set includes custom network/item/gamemode registration,
 client command and notification callbacks, server-to-client string commands,
 common player lifecycle callbacks, player/NPC kill callbacks, titan doomed,
@@ -500,7 +500,8 @@ AddClientCommandCallback("example", HandleCommand)
 ```
 
 Unresolved callbacks and callbacks without an explicit return type are only
-checked for arity. Unsupported native registration APIs remain unchecked.
+checked for arity. Native registration APIs without a known declaration or a
+built-in contract remain unchecked.
 
 ### `invalid-http-request-options`
 
