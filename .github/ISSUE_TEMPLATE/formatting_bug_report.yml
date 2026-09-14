@@ -1,4 +1,4 @@
-name: Bug Report
+name: Formatting Bug Report
 description: Report incorrect, undesirable, or unexpected formatting output
 labels: ["bug"]
 body:

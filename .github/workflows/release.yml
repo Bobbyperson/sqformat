@@ -16,18 +16,23 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             name: sqformat-linux-x86_64
+            lsp-name: sqformat-lsp-linux-x86_64
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             name: sqformat-linux-aarch64
+            lsp-name: sqformat-lsp-linux-aarch64
           - target: x86_64-apple-darwin
             os: macos-latest
             name: sqformat-macos-x86_64
+            lsp-name: sqformat-lsp-macos-x86_64
           - target: aarch64-apple-darwin
             os: macos-latest
             name: sqformat-macos-aarch64
+            lsp-name: sqformat-lsp-macos-aarch64
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             name: sqformat-windows-x86_64.exe
+            lsp-name: sqformat-lsp-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -47,13 +52,17 @@ jobs:
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             cp target/${{ matrix.target }}/release/sqformat.exe ${{ matrix.name }}
+            cp target/${{ matrix.target }}/release/sqformat-lsp.exe ${{ matrix.lsp-name }}
           else
             cp target/${{ matrix.target }}/release/sqformat ${{ matrix.name }}
+            cp target/${{ matrix.target }}/release/sqformat-lsp ${{ matrix.lsp-name }}
           fi
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: ${{ matrix.name }}
+          path: |
+            ${{ matrix.name }}
+            ${{ matrix.lsp-name }}
 
   release:
     needs: build

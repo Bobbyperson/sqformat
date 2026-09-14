@@ -21,16 +21,19 @@ Before submitting a PR, make sure all checks pass:
 cargo test --all-features
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all -- --check
+cargo doc --all-features
 ```
 
 ## Project Structure
 
-This is a Cargo workspace with two crates:
+This is a Cargo workspace with four crates:
 
-- **`sqfmt`** -- CLI binary
-- **`sqfmt-lib`** -- Core formatting library
+- **`sqfmt`** -- The `sqformat` formatter and linter CLI binary.
+- **`sqfmt-lib`** -- The core formatting and configuration library.
+- **`sqfmt-lint`** -- Project-aware lint rules and semantic analysis.
+- **`sqfmt-lsp`** -- The `sqformat-lsp` language-server binary and library.
 
-Most contributions will be in `sqfmt-lib`.
+Formatting changes usually belong in `sqfmt-lib`; CLI, lint, and editor behavior live in their corresponding crates.
 
 ### Formatter Design
 
@@ -55,21 +58,25 @@ The core formatting strategy is `alt(single_line(...), multi_line_fallback)`. Th
 
 ## Testing
 
-Tests live alongside the code in `#[cfg(test)] mod test` blocks. When adding or changing formatting behavior:
+Unit tests live alongside the code in `#[cfg(test)] mod test` blocks, with additional integration tests under crate-specific `tests/` directories where needed. Run the full workspace suite for changes that cross crate boundaries.
+
+When adding or changing formatting behavior:
 
 1. Add a test case that covers the new behavior.
 2. Run `cargo test -p sqfmt-lib` to verify.
-3. If you changed a formatting rule, update `STYLE.md` to match.
+3. If you changed a formatting rule, update [`docs/formatting.md`](docs/formatting.md) to match.
 4. Check idempotency on real files, formatting already-formatted output should produce identical results:
    ```sh
-   cargo run -- file.nut > /tmp/pass1.nut
-   cargo run -- /tmp/pass1.nut > /tmp/pass2.nut
+   cargo run -q -p sqformat -- file.nut > /tmp/pass1.nut
+   cargo run -q -p sqformat -- /tmp/pass1.nut > /tmp/pass2.nut
    diff /tmp/pass1.nut /tmp/pass2.nut
    ```
    Or run the full idempotency CI job locally with [act](https://github.com/nektos/act):
    ```sh
    act --workflows ".github/workflows/rust.yml" --job "idempotency"
    ```
+
+For linter changes, add focused tests in `sqfmt-lint` and run `cargo test -p sqfmt-lint`. For language-server changes, add protocol or semantic tests in `sqfmt-lsp` and run `cargo test -p sqformat-lsp`. Manual LSP smoke-test tools are documented in [`sqfmt-lsp/tests/manual/README.md`](sqfmt-lsp/tests/manual/README.md).
 
 ## Reporting Bugs
 
