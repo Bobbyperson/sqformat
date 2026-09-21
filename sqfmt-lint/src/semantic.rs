@@ -260,6 +260,39 @@ impl SemanticDocument {
             .collect()
     }
 
+    pub(crate) fn variable_is_referenced(&self, declaration: &OwnedDeclaration) -> bool {
+        if self
+            .references
+            .iter()
+            .any(|reference| reference.target.as_ref() == Some(&declaration.range))
+        {
+            return true;
+        }
+        let equivalents = self
+            .declarations
+            .iter()
+            .filter(|candidate| {
+                candidate.kind == DeclarationKind::Variable
+                    && candidate.name == declaration.name
+                    && candidate.scope_depth == declaration.scope_depth
+                    && candidate.visibility == declaration.visibility
+            })
+            .collect::<Vec<_>>();
+        let Some(last_declaration_end) = equivalents
+            .iter()
+            .map(|candidate| candidate.range.end)
+            .max()
+        else {
+            return false;
+        };
+        self.references.iter().any(|reference| {
+            reference.range.start > last_declaration_end
+                && equivalents
+                    .iter()
+                    .any(|candidate| reference.target.as_ref() == Some(&candidate.range))
+        })
+    }
+
     pub fn global_references(&self, name: &str) -> Vec<Range<usize>> {
         self.references
             .iter()

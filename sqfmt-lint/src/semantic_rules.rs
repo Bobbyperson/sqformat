@@ -15,6 +15,7 @@ pub const INITIALIZER_TYPE_RULE: &str = "initializer-type";
 pub const RETURN_TYPE_RULE: &str = "return-type";
 pub const REMOTE_FUNCTION_NOT_GLOBAL_RULE: &str = "remote-function-not-global";
 pub const CALLBACK_SIGNATURE_MISMATCH_RULE: &str = "callback-signature-mismatch";
+pub const UNUSED_VARIABLE_RULE: &str = "unused-variable";
 
 #[derive(Clone, Debug)]
 pub struct SemanticFile<'a, I> {
@@ -111,6 +112,7 @@ where
         diagnostics.extend(self.type_diagnostics(file, document));
         diagnostics.extend(self.remote_function_global_diagnostics(file, document));
         diagnostics.extend(self.callback_signature_diagnostics(file, document));
+        diagnostics.extend(self.unused_variable_diagnostics(document));
         diagnostics.sort_by(|left, right| {
             left.range
                 .start
@@ -119,6 +121,32 @@ where
                 .then_with(|| left.rule.cmp(right.rule))
         });
         diagnostics
+    }
+
+    fn unused_variable_diagnostics(&self, document: &SemanticDocument) -> Vec<Diagnostic> {
+        document
+            .declarations
+            .iter()
+            .filter(|declaration| {
+                declaration.kind == DeclarationKind::Variable
+                    && !declaration.name.starts_with('_')
+                    && !document.variable_is_referenced(declaration)
+                    && (!declaration.is_global
+                        || !self.files.iter().any(|file| {
+                            !file
+                                .document
+                                .global_references(&declaration.name)
+                                .is_empty()
+                        }))
+            })
+            .map(|declaration| {
+                diagnostic(
+                    declaration.range.clone(),
+                    UNUSED_VARIABLE_RULE,
+                    format!("`{}` is never used", declaration.name),
+                )
+            })
+            .collect()
     }
 
     fn duplicate_diagnostics(&self, document: &SemanticDocument) -> Vec<Diagnostic> {
@@ -1600,8 +1628,90 @@ mod tests {
     #[test]
     fn reports_duplicate_declaration_at_second_declaration() {
         assert_diagnostics(
-            "void function Example() { local duplicate = 1; local duplicate = 2 }",
+            "void function Example() { local duplicate = 1; local duplicate = duplicate + 1; print(duplicate) }",
             &[(DUPLICATE_DECLARATION_RULE, "duplicate")],
+        );
+    }
+
+    #[test]
+    fn reports_unused_file_and_function_variables() {
+        assert_diagnostics(
+            "int fileValue = 1; void function Example() { int localValue = 2 }",
+            &[
+                (UNUSED_VARIABLE_RULE, "fileValue"),
+                (UNUSED_VARIABLE_RULE, "localValue"),
+            ],
+        );
+    }
+
+    #[test]
+    fn accepts_used_and_intentionally_unused_variables() {
+        assert_diagnostics(
+            r#"
+global var ExternalValue
+int fileValue = 1
+int function Example( int parameter ) {
+	int localValue = ExternalValue + fileValue + parameter
+	int _intentionallyUnused = 2
+	return localValue
+}
+"#,
+            &[],
+        );
+    }
+
+    #[test]
+    fn accepts_global_variable_used_from_another_file() {
+        let declaration = crate::semantic::analyze("global int SharedValue = 1");
+        let reference =
+            crate::semantic::analyze("void function UseSharedValue() { print(SharedValue) }");
+        let workspace = SemanticWorkspace::new([
+            SemanticFile {
+                id: "declaration.gnut",
+                document: &declaration,
+                targets: VmTargets::ALL,
+            },
+            SemanticFile {
+                id: "reference.gnut",
+                document: &reference,
+                targets: VmTargets::ALL,
+            },
+        ]);
+
+        assert!(workspace.diagnostics(&"declaration.gnut").is_empty());
+    }
+
+    #[test]
+    fn accepts_variable_defined_in_each_preprocessor_branch() {
+        assert_diagnostics(
+            r#"
+void function UpdateCockpitRui() {
+	#if SP
+		bool ejectIsAllowed = false
+	#else
+		bool ejectIsAllowed = !TitanEjectIsDisabled()
+	#endif
+	RuiSetBool( file.cockpitRui, "ejectIsAllowed", ejectIsAllowed )
+}
+"#,
+            &[],
+        );
+    }
+
+    #[test]
+    fn reports_branch_variable_used_only_in_another_branch() {
+        assert_diagnostics(
+            r#"
+void function Example() {
+	#if SP
+		bool branchValue = false
+		print( branchValue )
+	#else
+		bool branchValue = true
+	#endif
+}
+"#,
+            &[(UNUSED_VARIABLE_RULE, "branchValue")],
         );
     }
 
@@ -1640,7 +1750,7 @@ mod tests {
     #[test]
     fn reports_initializer_type_at_declaration() {
         assert_diagnostics(
-            "class Expected {} class Actual {} void function Example() { Expected value = Actual() }",
+            "class Expected {} class Actual {} void function Example() { Expected value = Actual(); print(value) }",
             &[(INITIALIZER_TYPE_RULE, "value")],
         );
     }

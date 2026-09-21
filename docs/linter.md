@@ -150,6 +150,20 @@ void function Show( int value ) {
 }
 ```
 
+### `unused-variable`
+
+**Default; project-wide.** Reports file-scope and function-local variables that
+are never referenced. This includes loop and catch bindings. Parameters, fields,
+and names beginning with `_` are not reported. References to exported variables
+from other indexed files count as uses.
+
+```squirrel
+void function Example()
+{
+	int unused = 1
+}
+```
+
 ### `invalid-member`
 
 Reports a member absent from a fully known workspace `struct` or `class`,

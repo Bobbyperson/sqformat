@@ -25,7 +25,7 @@ pub use semantic_rules::{
     ARGUMENT_TYPE_RULE, CALL_ARITY_RULE, CALLBACK_SIGNATURE_MISMATCH_RULE,
     DUPLICATE_DECLARATION_RULE, INITIALIZER_TYPE_RULE, INVALID_MEMBER_RULE,
     REMOTE_FUNCTION_NOT_GLOBAL_RULE, RETURN_TYPE_RULE, ResolvedType, SemanticFile, SemanticMember,
-    SemanticWorkspace,
+    SemanticWorkspace, UNUSED_VARIABLE_RULE,
 };
 
 pub const THREADED_LOOP_RULE: &str = "threaded-loop-without-wait";
