@@ -5,7 +5,8 @@ use crate::combinators::{
 use crate::operator::{binary_operator, postfix_operator, prefix_needs_space, prefix_operator};
 use crate::shared::{identifier, optional_separator, token_or_tag};
 use crate::token::{
-    discard_token, token, token_ignoring_blank_lines, token_trailing, token_without_trailing,
+    discard_token, token, token_before_lines_only, token_ignoring_blank_lines, token_trailing,
+    token_without_before_lines, token_without_trailing,
 };
 use crate::type_format::type_format;
 use crate::writer::Writer;
@@ -167,7 +168,18 @@ pub fn table_expression<'s>(
 ) -> impl FnOnce(Writer) -> Option<Writer> + 's {
     move |i| {
         if expr.slots.is_empty() && expr.spread.is_none() {
-            return tuple((token(expr.open), token_ignoring_blank_lines(expr.close)))(i);
+            return alt(
+                single_line(tuple((
+                    token(expr.open),
+                    token_ignoring_blank_lines(expr.close),
+                ))),
+                tuple((
+                    token(expr.open),
+                    indented(token_before_lines_only(expr.close)),
+                    empty_line,
+                    token_without_before_lines(expr.close),
+                )),
+            )(i);
         }
         alt(
             single_line(table_expression_single_line(expr)),
@@ -384,7 +396,7 @@ fn property_expression<'s>(
                     // on the property doesn't cause single_line to fail. Emit trailing after.
                     |w: Writer| {
                         let w = single_line(tuple((
-                            token_without_trailing(expr.dot),
+                            token(expr.dot),
                             token_without_trailing(property_token),
                         )))(w)?;
                         w.with_allow_newlines(token_trailing(property_token))
@@ -461,7 +473,7 @@ fn call_expression<'s>(expr: &'s CallExpression<'s>) -> impl FnOnce(Writer) -> O
                     i.with_allow_newlines(token_trailing(expr.close))
                 },
                 move |i| {
-                    let i = token_without_trailing(expr.open)(i)?;
+                    let i = token(expr.open)(i)?;
                     let i = indented(move |i| call_args_multi(&expr.arguments)(i))(i)?;
                     let i = empty_line(i)?;
                     token(expr.close)(i)

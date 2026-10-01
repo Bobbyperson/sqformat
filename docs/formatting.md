@@ -1,18 +1,37 @@
-# sqformat Style Guide
+# Formatting Style
 
 This document describes every formatting rule sqformat applies. All examples show input on the left / top and formatted output on the right / bottom.
+
+Examples use the default settings. The formatter searches the current directory and its parents for `.sqformat.toml`; `--config <path>` selects a file explicitly, and command-line options override file settings. The supported keys and defaults are:
+
+```toml
+column_limit = 160
+indent_style = "tab" # "tab" or "space"
+indent_width = 4
+
+spaces_in_expr_brackets = true
+array_spaces = true
+array_multiline_commas = true
+array_multiline_trailing_commas = false
+array_singleline_trailing_commas = false
+```
+
+The file can also contain a `[lint]` rule-selection table; see the
+[linter documentation](linter.md#rule-selection).
+
+Run `sqformat --help` for the corresponding command-line options.
 
 ---
 
 ## Line Length
 
-The default column limit is **160 characters**. When a construct exceeds this limit, sqformat falls back to a multi-line layout. When it fits, it stays on one line.
+The default column limit is **160 columns**. Unicode characters count as one column, and tabs count as the configured indentation width. When a construct exceeds this limit, sqformat falls back to a multi-line layout. When it fits, it stays on one line.
 
 ---
 
 ## Indentation
 
-One **tab** per level. Tabs are assumed to be 4 columns wide.
+One **tab** per level by default, with an indentation width of four columns. Both the style and width are configurable.
 
 ```squirrel
 // input
@@ -147,6 +166,8 @@ someFunction(
 )
 ```
 
+Comments attached to an opening parenthesis are preserved and force the call to use its multi-line layout.
+
 ---
 
 ## Spaces in Arrays
@@ -277,6 +298,8 @@ someObject
 	.anotherMethod()
 ```
 
+A comment after `.` is preserved; the property continues on the following line.
+
 ---
 
 ## Vectors
@@ -325,6 +348,24 @@ Multi-line `/* */` comments preserve their internal line breaks, but trailing wh
  * its formatting
  */
 ```
+
+---
+
+## Disabling Formatting
+
+Place `// fmt: off` and `// fmt: on` on their own lines to preserve everything
+between them byte-for-byte. The directive lines themselves are formatted like
+normal comments. An unmatched `// fmt: off` disables formatting through the end
+of the file.
+
+```squirrel
+// fmt: off
+if(x){ KeepExactly(  this ); }
+// fmt: on
+```
+
+The disabled source must still be valid Squirrel because sqformat parses the
+whole file before formatting it.
 
 ---
 
@@ -508,7 +549,7 @@ struct MyStruct
 
 ## Tables
 
-Spaces inside `{ }` for single-line tables. Empty tables get no spaces: `{}`. Multi-line tables indent each slot.
+Spaces inside `{ }` for single-line tables. Empty tables get no spaces: `{}`. A table containing only comments uses a multi-line layout and preserves those comments. Multi-line tables indent each slot.
 
 ```squirrel
 // single-line

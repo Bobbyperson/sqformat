@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 struct WriterStore {
-    lines: im::Vector<String>,
+    lines: im::Vector<WrittenLine>,
     current_line: String,
     remaining_columns: isize,
     /// Extra indent levels from preprocessor blocks (#if / #endif).
@@ -11,9 +11,18 @@ struct WriterStore {
     preproc_depth: isize,
 }
 
+#[derive(Clone)]
+struct WrittenLine {
+    text: String,
+    preserve_trailing: bool,
+}
+
 #[derive(Clone, Copy)]
 struct WriteConfig {
     is_single_line: bool,
+    /// Number of completed lines when the current single-line region started.
+    /// If a permitted trailing comment adds a line, any later write rejects the layout.
+    single_line_start: usize,
     /// When true, trailing comments (// comment) are allowed even in single_line
     /// mode by temporarily suspending single_line. Used for the last expression
     /// in a single_line region (e.g., RHS of a binary expression) where the
@@ -47,6 +56,7 @@ impl Writer {
             }),
             config: WriteConfig {
                 is_single_line: false,
+                single_line_start: 0,
                 allow_trailing_in_single_line: false,
                 indent_depth: 0,
                 flat_indent: false,
@@ -94,7 +104,7 @@ impl Writer {
                 .store
                 .lines
                 .last()
-                .is_some_and(|line| line.trim_end().ends_with('{'))
+                .is_some_and(|line| line.text.trim_end().ends_with('{'))
     }
 
     pub fn has_content(&self) -> bool {
@@ -116,6 +126,11 @@ impl Writer {
     pub fn with_single_line<F: FnOnce(Self) -> Option<Self>>(self, f: F) -> Option<Self> {
         let config = WriteConfig {
             is_single_line: true,
+            single_line_start: if self.config.is_single_line {
+                self.config.single_line_start
+            } else {
+                self.store.lines.len()
+            },
             ..self.config
         };
         self.with_config(config, f)
@@ -177,10 +192,12 @@ impl Writer {
             // Ensure the indent on the current line matches the current config depth.
             // This can get out of sync when trailing comments emit newlines at a different
             // indent depth (inside an indented block) and then we leave that block.
-            let correct_indent = self.format.indent.repeat(self.effective_depth());
+            let effective_depth = self.effective_depth();
+            let correct_indent = self.format.indent.repeat(effective_depth);
+            let remaining_columns = self.format.column_limit as isize
+                - self.format.indent_columns as isize * effective_depth as isize;
             let store = Arc::make_mut(&mut self.store);
-            store.remaining_columns =
-                self.format.column_limit as isize - correct_indent.len() as isize;
+            store.remaining_columns = remaining_columns;
             store.current_line = correct_indent;
             Some(self)
         } else {
@@ -196,9 +213,10 @@ impl Writer {
         }
         let store = Arc::make_mut(&mut self.store);
         store.remaining_columns = self.format.column_limit as isize;
-        store
-            .lines
-            .push_back(std::mem::take(&mut store.current_line));
+        store.lines.push_back(WrittenLine {
+            text: std::mem::take(&mut store.current_line),
+            preserve_trailing: false,
+        });
         Some(self)
     }
 
@@ -207,12 +225,16 @@ impl Writer {
             return None;
         }
 
-        let new_line = self.format.indent.repeat(self.effective_depth());
+        let effective_depth = self.effective_depth();
+        let new_line = self.format.indent.repeat(effective_depth);
+        let remaining_columns = self.format.column_limit as isize
+            - self.format.indent_columns as isize * effective_depth as isize;
         let store = Arc::make_mut(&mut self.store);
-        store.remaining_columns = self.format.column_limit as isize - new_line.len() as isize;
-        store
-            .lines
-            .push_back(std::mem::replace(&mut store.current_line, new_line));
+        store.remaining_columns = remaining_columns;
+        store.lines.push_back(WrittenLine {
+            text: std::mem::replace(&mut store.current_line, new_line),
+            preserve_trailing: false,
+        });
 
         Some(self)
     }
@@ -228,7 +250,35 @@ impl Writer {
     }
 
     pub fn write(self, text: &str) -> Option<Self> {
-        let text_columns = text.len() as isize;
+        if self.config.is_single_line && self.store.lines.len() > self.config.single_line_start {
+            return None;
+        }
+
+        if text.contains('\n') {
+            if self.config.is_single_line {
+                return None;
+            }
+
+            let mut written = self;
+            for part in text.split_inclusive('\n') {
+                if let Some(line) = part.strip_suffix('\n') {
+                    let columns = written.text_columns(line);
+                    written = written.write_without_breaking(line, columns);
+                    let store = Arc::make_mut(&mut written.store);
+                    store.lines.push_back(WrittenLine {
+                        text: std::mem::take(&mut store.current_line),
+                        preserve_trailing: true,
+                    });
+                    store.remaining_columns = written.format.column_limit as isize;
+                } else {
+                    let columns = written.text_columns(part);
+                    written = written.write_without_breaking(part, columns);
+                }
+            }
+            return Some(written);
+        }
+
+        let text_columns = self.text_columns(text);
         let written = self.write_without_breaking(text, text_columns);
 
         if written.config.is_single_line && written.store.remaining_columns < 0 {
@@ -247,14 +297,71 @@ impl Writer {
 
         self
     }
+
+    fn text_columns(&self, text: &str) -> isize {
+        text.chars()
+            .map(|character| {
+                if character == '\t' {
+                    self.format.indent_columns
+                } else {
+                    1
+                }
+            })
+            .sum::<usize>() as isize
+    }
 }
 
 impl std::fmt::Display for Writer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for line in &self.store.lines {
-            f.write_str(line.trim_end())?;
+            if line.preserve_trailing {
+                f.write_str(&line.text)?;
+            } else {
+                f.write_str(line.text.trim_end())?;
+            }
             f.write_str("\n")?;
         }
         f.write_str(self.store.current_line.trim_end())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn writer(column_limit: usize, indent_columns: usize) -> Writer {
+        Writer::new(Arc::new(Format {
+            column_limit,
+            indent: "\t".to_string(),
+            indent_columns,
+            ..Format::default()
+        }))
+    }
+
+    #[test]
+    fn columns_count_unicode_tabs_and_configured_indentation() {
+        let unicode = writer(4, 4)
+            .with_single_line(|writer| writer.write("éééé"))
+            .expect("four Unicode characters occupy four columns");
+        assert_eq!(unicode.remaining_columns(), 0);
+
+        let tab = writer(4, 4)
+            .with_single_line(|writer| writer.write("\t"))
+            .expect("a tab occupies the configured width");
+        assert_eq!(tab.remaining_columns(), 0);
+
+        let indented = writer(5, 4)
+            .with_indent(|writer| writer.empty_line())
+            .expect("indentation fits");
+        assert_eq!(indented.remaining_columns(), 1);
+    }
+
+    #[test]
+    fn multiline_text_preserves_literal_line_contents() {
+        let text = "@\"first  \n\tsecond\n\"";
+        let written = writer(20, 4).write(text).expect("multiline write");
+
+        assert_eq!(written.to_string(), text);
+        assert_eq!(written.remaining_columns(), 19);
     }
 }

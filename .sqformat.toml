@@ -10,3 +10,9 @@ array_spaces = true
 array_multiline_commas = true
 array_multiline_trailing_commas = false
 array_singleline_trailing_commas = false
+
+[lint]
+# Leave `select` unset to use the default rules. Setting it replaces the defaults.
+# select = ["ALL"]
+extend-select = []
+extend-ignore = []

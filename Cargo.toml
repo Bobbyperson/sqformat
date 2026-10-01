@@ -2,5 +2,7 @@
 resolver = "2"
 members = [
     "sqfmt",
+    "sqfmt-lint",
     "sqfmt-lib",
+    "sqfmt-lsp",
 ]
