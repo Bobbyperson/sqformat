@@ -65,7 +65,7 @@ sqformat --lint --advisory-lints
 sqformat --help
 ```
 
-Lint rules cover unreachable statements, empty `else` branches, duplicate switch cases, no-effect expressions, threaded loops without suspension, zero-duration waits, entity validity across decoded handles, unchecked array indexes, `find()` in boolean contexts, unregistered signals, remote-function argument contracts, and unresolved Northstar manifest callbacks. `--advisory-lints` additionally checks entity use after a suspension point and threads spawned repeatedly from polling loops; these are opt-in because programmer-known lifetime or scheduling guarantees can make them intentional.
+Lint rules cover unreachable statements, empty `else` branches, duplicate switch cases, unused variables, no-effect expressions, threaded loops without suspension, zero-duration waits, entity validity across decoded handles, unchecked array indexes, `find()` in boolean contexts, unregistered signals, remote-function argument contracts, and unresolved Northstar manifest callbacks. `--advisory-lints` additionally checks entity use after a suspension point and threads spawned repeatedly from polling loops; these are opt-in because programmer-known lifetime or scheduling guarantees can make them intentional.
 
 Lint diagnostics are written to stderr. The command exits with status 1 for lint findings, unreadable inputs, or parse failures.
 

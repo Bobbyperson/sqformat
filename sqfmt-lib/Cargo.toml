@@ -1,6 +1,6 @@
 [package]
 name = "sqfmt-lib"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2024"
 license = "MIT"
 
@@ -12,4 +12,4 @@ im = "15.0"
 serde = { version = "1", features = ["derive"] }
 toml = "1.1.2"
 lexical = "7.0.5"
-sqparse = { git = "https://github.com/Bobbyperson/sqparse.git", tag = "v0.5.0" }
+sqparse = { git = "https://github.com/Bobbyperson/sqparse.git", tag = "v0.5.1" }
